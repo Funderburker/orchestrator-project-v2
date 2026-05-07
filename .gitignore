@@ -1,0 +1,48 @@
+# Secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+*.secrets
+secrets/
+**/secrets/
+**/.credentials.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python / virtualenv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node
+node_modules/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Local per-machine state
+.claude/
+*.bak.*
+*.tmp
+.active
+
+# Build artifacts
+dist/
+build/
+coverage/
+.next/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Test projects (live scratch, not source)
+test-projects/
