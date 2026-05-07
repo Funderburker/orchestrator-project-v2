@@ -2,11 +2,51 @@
 
 Этот файл — short practical cheat sheet. Подробный обзор флоу — в `README.md`.
 
-## Server (Docker openclaw) — one-shot bootstrap
+## Server (Docker openclaw) — one-shot install
 
-Если поднимаешь openclaw в **Docker** на сервере (Ubuntu, root) — все ручные шаги по
-gh, basic auth, override.yml, anti-injection hook, git author env собраны в один
-**идемпотентный** скрипт `scripts/server-bootstrap.sh`.
+На **новом** сервере (Ubuntu, root) — один скрипт от чистой машины до работающего main:
+**`scripts/server-install.sh`**. Время: 10-20 минут (большая часть — `docker build` openclaw image).
+
+### Что нужно ДО запуска (только секреты, ~30 сек):
+
+```bash
+# 1. SSH key-only доступ root (Hetzner cloud-init обычно делает сам)
+# 2. Положи секреты:
+mkdir -p ~/.openclaw/secrets
+echo "ghp_xxx"  > ~/.openclaw/secrets/github_token   # classic PAT, repo+workflow scopes
+# опционально (если используешь):
+cat > ~/.openclaw/secrets/telegram.env <<EOF
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+EOF
+chmod -R go-rwx ~/.openclaw/secrets
+```
+
+### Запуск:
+
+```bash
+git clone https://github.com/Funderburker/orchestrator-project-v2 /root/orchestrator-project
+bash /root/orchestrator-project/scripts/server-install.sh
+```
+
+### Что делает (idempotent):
+
+| # | Шаг |
+|---|---|
+| 1 | apt install docker, docker-compose, nginx, jq, python3, openssl, git |
+| 2 | git clone openclaw в /opt/openclaw + checkout pinned tag (`v2026.5.6`) |
+| 3 | подкладывает наш custom docker-compose.yml поверх upstream |
+| 4 | `docker build -t openclaw:local /opt/openclaw` (~10-15 мин) |
+| 5 | `openclaw onboard` (создаёт ~/.openclaw/openclaw.json) |
+| 6 | nginx site-config с TLS (self-signed → замени на Let's Encrypt) |
+| 7 | вызывает `server-bootstrap.sh` (gh, hooks, AGENTS, override, claude full-path в openclaw.json, и т.д.) |
+
+После — UI на `https://<host>/`, main отвечает в TG, worker→main→TG нотифы работают, multi-user изоляция (`~/projects/<chat_id>/<slug>/` + `memory/telegram_<chat_id>/`).
+
+### server-bootstrap.sh отдельно
+
+Если openclaw уже стоит и собран, и нужно только **донастроить** (gh, hooks, AGENTS, override) —
+тот же `scripts/server-bootstrap.sh` без `install.sh` тоже работает.
 
 ### Pre-conditions (руками, один раз)
 
