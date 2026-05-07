@@ -79,13 +79,30 @@ curl -s http://localhost:<port>/<healthcheck>   # 2xx + ответ
    **Статус:** done
    ```
 
-## Step 5 — Git push
+## Step 5 — Git push (ОБЯЗАТЕЛЬНО, с самопроверкой)
 
-```
+```bash
 git -C <path> push -u origin main
 ```
 
-Если origin нет / ошибка — допиши в HANDOFF «push не сделал — причина X», но **не блокируйся** на этом. Сам код локально готов.
+**Самопроверка перед Step 6.** Перед `sessions_send` всегда:
+
+```bash
+git -C <path> log origin/main..HEAD --oneline
+```
+
+Если вывод **не пуст** — есть локальные коммиты, не доехавшие до GitHub. Делай:
+
+1. Один retry `git push -u origin main`.
+2. Если опять fail — НЕ молчи. В финальный отчёт `sessions_send` (Step 6) **первой строкой** пиши маркер:
+   ```
+   ⚠️ PUSH NOT SYNCED: <последняя строка ошибки git>
+   ```
+   Затем обычный итог. Manager увидит маркер, доcпушит сам или эскалирует юзеру.
+
+**Без этого юзер получает «✅ готов», открывает GitHub — а там пусто.** Это самая частая поломка нашего флоу.
+
+Если origin **вообще нет** в `.git/config` — проект был создан старым `new-project.sh` без GitHub-блока. Так же эскалируй маркером `⚠️ PUSH NOT SYNCED: no origin remote` — main настроит и доcпушит.
 
 ## Step 6 — Отчёт main'у через `sessions_send`
 

@@ -183,12 +183,27 @@ Worker шлёт результат через `sessions_send target=$(cat <path>
 
 ⚠️ **НЕЛЬЗЯ полагаться на text reply** — он остаётся в inter-session контексте, до юзера в TG **не дойдёт**. Только через явный `mcp__openclaw__message` с target.
 
+### ВСЕГДА перед ответом юзеру: Push-verify
+
+Прежде чем сказать юзеру «✅ готов» — обязательно проверь что свежие коммиты доехали до GitHub:
+
+```bash
+cd ~/projects/<chat_id>/<slug>
+git log origin/main..HEAD --oneline
+```
+
+- Пусто → всё запушено, можно отчитываться юзеру.
+- Есть коммиты → worker не доcпушил. Сделай `git push -u origin main` сам. Если падает с auth — настрой origin (`git remote set-url origin https://<token>@github.com/<owner>/<slug>.git` из секретов) и повтори. Только после успешного push — юзеру.
+
+**Если worker прислал маркер `⚠️ PUSH NOT SYNCED: ...`** в начале отчёта — это явный сигнал «доспушь сам» (он уже попробовал и retry'нул). Действуй так же.
+
 | Что прилетело | Что делать |
 |---|---|
-| `✅ <slug> готов. ...` | Прочитай `~/projects/<chat_id>/<slug>/DEPLOY.md` + `STATUS.md` + последнюю секцию `HANDOFF.md`. Убедись что реально работает (нет `.blocked`, коммиты есть, DEPLOY.md заполнен). Только потом — юзеру: ✅ <slug> готов. Стек / Адрес / Запуск. |
+| `✅ <slug> готов. ...` | Прочитай `~/projects/<chat_id>/<slug>/DEPLOY.md` + `STATUS.md` + последнюю секцию `HANDOFF.md`. **Push-verify (выше)**. Убедись что реально работает (нет `.blocked`, коммиты есть, DEPLOY.md заполнен). Только потом — юзеру: ✅ <slug> готов. Стек / Адрес / Запуск. |
+| `⚠️ PUSH NOT SYNCED: ... ✅ <slug> готов. ...` | Сначала Push-verify + доcпушь сам. Только после `git log origin/main..HEAD` пуст → юзеру «✅ готов». |
 | `🚨 <slug> упал. ...` | Прочитай хвост `~/projects/<chat_id>/<slug>/HANDOFF.md` + `STATUS.md`. Юзеру: 🚨 <slug> упал. Причина. Предложи действия. |
 | `.blocked` файл появился | Прочитай `~/projects/<chat_id>/<slug>/.blocked`. Юзеру: 🚦 <slug> ждёт ответа. Воркер спрашивает: <question дословно>. |
-| `[Internal task completion event]` (fallback) | Та же логика — прочитай файлы проекта, не верь статусу вслепую. |
+| `[Internal task completion event]` (fallback) | Та же логика — прочитай файлы проекта (включая Push-verify), не верь статусу вслепую. |
 
 ## 6. Юзер пишет «как там <slug>?»
 
