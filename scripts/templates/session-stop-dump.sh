@@ -38,13 +38,40 @@ except: print('')
 [ -n "$TRANSCRIPT" ] || exit 0
 [ -f "$TRANSCRIPT" ] || exit 0
 
+# Determine sessionKey from transcript metadata (multi-user isolation).
+# We look for the first openclaw context block in any user message and extract
+# the literal `session_key:` line. Falls back to "shared" if nothing found.
+# We do NOT parse format of the sessionKey itself — just treat as opaque,
+# only replacing ":" with "_" for filesystem safety.
+SESSION_KEY=$(python3 - "$TRANSCRIPT" <<'PY'
+import json, re, sys
+f = sys.argv[1]
+patt = re.compile(r"session_key:\s*([^\s\n]+)")
+for line in open(f):
+    try: rec = json.loads(line)
+    except Exception: continue
+    msg = rec.get("message", {})
+    c = msg.get("content", "")
+    if isinstance(c, list):
+        text = " ".join(x.get("text","") for x in c if isinstance(x,dict) and x.get("type")=="text")
+    else:
+        text = str(c)
+    m = patt.search(text)
+    if m:
+        print(m.group(1))
+        break
+PY
+)
+[ -z "$SESSION_KEY" ] && SESSION_KEY="shared"
+SESSION_KEY_SAFE=${SESSION_KEY//:/_}
+
 TODAY=$(date +%Y-%m-%d)
-TAIL_FILE="$HOME/.openclaw/workspace/memory/${TODAY}.md"
+TAIL_FILE="$HOME/.openclaw/workspace/memory/${SESSION_KEY_SAFE}/${TODAY}.md"
 mkdir -p "$(dirname "$TAIL_FILE")"
 
 if [ ! -f "$TAIL_FILE" ]; then
   cat > "$TAIL_FILE" <<EOF
-# ${TODAY}
+# ${TODAY} — ${SESSION_KEY}
 
 ## Session tail (auto-updated через Stop hook)
 
