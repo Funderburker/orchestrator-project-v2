@@ -46,7 +46,13 @@ except: print('')
 SESSION_KEY=$(python3 - "$TRANSCRIPT" <<'PY'
 import json, re, sys
 f = sys.argv[1]
-patt = re.compile(r"session_key:\s*([^\s\n]+)")
+# Try multiple patterns — openclaw metadata format may differ between versions
+# (older: session_key: agent:main:...; newer: "chat_id": "telegram:N").
+patterns = [
+    re.compile(r'"chat_id"\s*:\s*"([^"]+)"'),     # newer JSON-block metadata
+    re.compile(r'session_key:\s*([^\s\n]+)'),     # older context-block metadata
+    re.compile(r'(agent:[a-z]+:[a-z]+:[a-z]+:\d+)'),  # last-resort: full sessionKey
+]
 for line in open(f):
     try: rec = json.loads(line)
     except Exception: continue
@@ -56,10 +62,11 @@ for line in open(f):
         text = " ".join(x.get("text","") for x in c if isinstance(x,dict) and x.get("type")=="text")
     else:
         text = str(c)
-    m = patt.search(text)
-    if m:
-        print(m.group(1))
-        break
+    for p in patterns:
+        m = p.search(text)
+        if m:
+            print(m.group(1))
+            sys.exit(0)
 PY
 )
 [ -z "$SESSION_KEY" ] && SESSION_KEY="shared"
