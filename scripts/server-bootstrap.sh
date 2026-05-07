@@ -218,17 +218,22 @@ fi
 # script
 deploy_workspace_file "$REPO_ROOT/scripts/new-project.sh" "$WORKSPACE_DIR/scripts/new-project.sh" 0755
 
-# ---------- 8) openclaw.json: GIT_* env for spawned claude ----------
-log "8/12 openclaw.json: GIT_AUTHOR_*/GIT_COMMITTER_* in cliBackends.claude-cli.env"
+# ---------- 8) openclaw.json: GIT_* env + claude full path ----------
+log "8/12 openclaw.json: cliBackends.claude-cli.command (full path) + GIT_AUTHOR_*/GIT_COMMITTER_*"
 [ -f "$OPENCLAW_JSON" ] || die "$OPENCLAW_JSON missing"
 python3 - "$OPENCLAW_JSON" "$GIT_USER" "$GIT_EMAIL" <<'PY'
 import json, sys
 path, user, email = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     d = json.load(f)
-env = d.setdefault("agents", {}).setdefault("defaults", {}) \
-       .setdefault("cliBackends", {}).setdefault("claude-cli", {}) \
-       .setdefault("env", {})
+backend = d.setdefault("agents", {}).setdefault("defaults", {}) \
+           .setdefault("cliBackends", {}).setdefault("claude-cli", {})
+# openclaw image v5.6+ no longer creates /usr/local/bin/claude symlink at build
+# time — point at the cli.js entry directly to avoid PATH lookup failure.
+desired_command = "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+if backend.get("command") != desired_command:
+    backend["command"] = desired_command
+env = backend.setdefault("env", {})
 desired = {
     "GIT_AUTHOR_NAME": user,
     "GIT_AUTHOR_EMAIL": email,
