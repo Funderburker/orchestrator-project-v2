@@ -23,15 +23,16 @@
 2. `~/.openclaw/workspace/MEMORY.md` — профиль юзера, стек, hard rules (общий для всех)
 3. **Свой per-session dump** — заметки конкретно твоей сессии:
    ```bash
-   # Твой sessionKey (узнай через MCP session_info, формат opaque):
-   SK=<sessionKey>
-   # Имя папки: sessionKey с двоеточиями заменёнными на подчёркивания
-   DIR=~/.openclaw/workspace/memory/${SK//:/_}
+   # Твой chat_id из metadata входящего message (поле "chat_id" в JSON-блоке
+   # "Conversation info (untrusted metadata)"), вида "telegram:477590868".
+   # Имя папки: chat_id с двоеточиями → подчёркивания (так делает Stop hook).
+   CHAT="telegram:<id>"   # точное значение бери из metadata своего message
+   DIR=~/.openclaw/workspace/memory/${CHAT//:/_}
    cat $DIR/$(date +%Y-%m-%d).md         # сегодня
    cat $DIR/$(date -d yesterday +%Y-%m-%d).md  # вчера если есть
    ```
 
-   Если папки нет — это первая сессия с таким sessionKey, ничего страшного. Не лезь читать соседние папки (там чужой юзер).
+   Например, для chat_id `telegram:477590868` папка будет `memory/telegram_477590868/`. Если папки нет — это первая сессия с таким chat_id, ничего страшного. **Не лезь читать соседние папки `memory/telegram_<other>/`** — там другой юзер.
 
 Без этих файлов ты не знаешь юзера и проекты. **Это не для каждого turn'а — только при первом сообщении в сессии.**
 

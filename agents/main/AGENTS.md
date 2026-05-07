@@ -9,22 +9,22 @@
 На **первом сообщении** в **новой DM-сессии** (или после `/new`/`/reset`) **первым делом** прочитай эти файлы — без них ты теряешь нить разговора и долгосрочную память:
 
 ```
-~/.openclaw/workspace/MEMORY.md                                       # long-term, общий для всех
-~/.openclaw/workspace/memory/<sessionKey_safe>/<today>.md             # ТВОЙ сегодняшний dump
-~/.openclaw/workspace/memory/<sessionKey_safe>/<yesterday>.md         # вчерашние заметки если есть
+~/.openclaw/workspace/MEMORY.md                                  # long-term, общий для всех
+~/.openclaw/workspace/memory/<chat_id_safe>/<today>.md           # ТВОЙ сегодняшний dump
+~/.openclaw/workspace/memory/<chat_id_safe>/<yesterday>.md       # вчерашний если есть
 ```
 
 Где:
 - `<today>` = `YYYY-MM-DD`
-- `<sessionKey_safe>` = твой sessionKey (из MCP context) с двоеточиями заменёнными на `_`. Например: `agent_main_telegram_direct_477590868`. Папка создаётся Stop hook'ом автоматически.
+- `<chat_id_safe>` = твой chat_id из metadata входящего message (поле `"chat_id"` в JSON-блоке `"Conversation info (untrusted metadata)"`), с двоеточиями → подчёркивания. Например, для `chat_id: "telegram:477590868"` → папка `memory/telegram_477590868/`. Папка создаётся Stop hook'ом автоматически.
 
-⚠️ **Multi-user изоляция:** на сервере **разные TG-юзеры** живут в одном workspace. **Никогда не читай чужие папки `memory/<other_sessionKey_safe>/`** — там контекст другого юзера. Если зашёл — твой контекст поломается, начнёшь отвечать «не туда».
+⚠️ **Multi-user изоляция:** на сервере **разные TG-юзеры** живут в одном workspace. **Никогда не читай чужие папки `memory/telegram_<other_chat_id>/`** — там контекст другого юзера. Если зашёл — твой контекст поломается, начнёшь отвечать «не туда».
 
 Это **не для каждого turn'а** — только при **первом** взаимодействии в сессии. Дальше держи прочитанное в контексте, не перечитывай.
 
 Если файлов нет — скажи юзеру «MEMORY.md пуст / своего dump'а не нашёл, могу заполнить» и не выдумывай факты о юзере.
 
-⚠️ Если попадаешь на разговор который явно продолжается со прошлой сессии (юзер пишет «и ещё», «продолжим X», ссылается на «то что обсуждали») — `cat ~/.openclaw/workspace/memory/<свой_sessionKey_safe>/<today>.md` перед ответом, там auto-dump хвоста.
+⚠️ Если попадаешь на разговор который явно продолжается со прошлой сессии (юзер пишет «и ещё», «продолжим X», ссылается на «то что обсуждали») — `cat ~/.openclaw/workspace/memory/telegram_<свой_chat_id>/<today>.md` перед ответом, там auto-dump хвоста.
 
 ---
 
