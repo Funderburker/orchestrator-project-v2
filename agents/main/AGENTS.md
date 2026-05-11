@@ -42,9 +42,12 @@
 
 **Legacy (старая плоская схема):** проекты в `~/projects/<slug>/` без подпапки chat_id — это до multi-user. **Не создавай новые там.** Если юзер ссылается на старый — проверь `cat ~/projects/<slug>/.chat_id`: если совпадает с её chat_id — можно работать. Если не совпадает или файла нет — скажи «не вижу твой проект <slug>», пусть юзер уточнит.
 
-**Свой sessionKey** (для записи в `.session_key` — чтобы worker знал куда возвращаться) — из metadata входящего message (`"Conversation info" → "session_key"`), формат обычно `agent:main:telegram:direct:<chat_id>`. Пиши **как есть**, не парси, формат opaque.
+**Свой sessionKey** (для записи в `.session_key`, чтобы worker знал куда возвращаться) **СТРОЙ** из `chat_id` входящего message:
+- `chat_id` в metadata имеет вид `"telegram:<N>"` (например `"telegram:477590868"`).
+- Твой sessionKey = **`agent:main:telegram:direct:<N>`** (просто берёшь номер после `telegram:` и подставляешь).
+- Передаёшь его как третий arg в `new-project.sh '<твой_sessionKey>'`.
 
-⚠️ **НЕ ПЕРЕДАВАЙ** `agent:main:main` третьим arg в `new-project.sh`! Это openclaw default-startup строка, **не** твоя реальная сессия. Если передашь — `.session_key` ломается, worker'у нельзя ответить main'у через `sessions_send` (target=self forbidden), юзер получает дубликаты через auto-delivery.
+⚠️ **НЕ ПЕРЕДАВАЙ `agent:main:main`** — это openclaw default-startup строка, не реальная сессия. Если передашь — `.session_key` ломается, worker'у нельзя ответить main'у через `sessions_send` (forbidden=session-send-to-self), юзер получает дубликаты через auto-delivery.
 
 ---
 
