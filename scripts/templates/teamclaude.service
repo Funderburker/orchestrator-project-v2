@@ -1,0 +1,37 @@
+[Unit]
+Description=TeamClaude Multi-account Claude Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/opt/teamclaude
+Environment=HOME=/home/openclaw
+Environment=NODE_ENV=production
+# teamclaude reads/writes its config from ~/.config/teamclaude.json
+ExecStart=/usr/bin/node /opt/teamclaude/src/index.js server
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=teamclaude
+
+# Hardening (mirrors what devops did for openclaw.service)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/openclaw
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

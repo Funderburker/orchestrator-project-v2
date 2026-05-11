@@ -25,14 +25,20 @@
 #   1. apt deps: gh, apache2-utils, jq (curl/python3/openssl/git already present)
 #   2. claude CLI globally: npm i -g @anthropic-ai/claude-code@<PIN>
 #   3. gh auth (under openclaw user, file-based)
-#   4. Deploy agents/main/*.md, agents/worker/*.md, our new-project.sh
-#   5. ~/.claude/.credentials.json + ~/.claude/settings.json (Stop hook)
-#   6. Patch /home/openclaw/.openclaw/openclaw.json:
-#      - cliBackends.claude-cli (full path + env: CLAUDE_CODE_OAUTH_TOKEN, GIT_AUTHOR_*)
+#   4. teamclaude proxy (multi-account rotation): git clone /opt/teamclaude,
+#      install our relay (/opt/teamclaude-relay/teamclaude-relay.cjs from repo
+#      vendor/), generate PROXY_API_KEY, install 2 systemd units under
+#      User=openclaw with the same hardening pattern devops used for openclaw.
+#   5. Deploy agents/main/*.md, agents/worker/*.md, our new-project.sh
+#   6. ~/.claude/settings.json (Stop hook)
+#   7. Patch /home/openclaw/.openclaw/openclaw.json:
+#      - cliBackends.claude-cli (full path + env: ANTHROPIC_BASE_URL,
+#        GIT_AUTHOR_*/GIT_COMMITTER_*)
 #      - agents.list (main + worker) if missing
 #      - default model -> Claude
-#   7. systemctl restart openclaw (so it re-reads config)
-#   8. Smoke tests (gh, claude, openclaw up, nginx 200, hook installed)
+#   8. systemctl restart openclaw (so it re-reads config)
+#   9. Smoke tests (gh, claude, openclaw up, nginx 200, hook installed,
+#      teamclaude + relay listening)
 
 set -euo pipefail
 
@@ -49,6 +55,12 @@ WORKER_WORKSPACE="$OPENCLAW_HOME/.openclaw/workspaces/worker"
 SECRETS_DIR="$OPENCLAW_HOME/.openclaw/secrets"
 CLAUDE_DIR="$OPENCLAW_HOME/.claude"
 CLAUDE_PIN="${CLAUDE_PIN:-2.1.119}"
+
+TEAMCLAUDE_REPO="${TEAMCLAUDE_REPO:-https://github.com/guilhermesilveira/teamclaude}"
+TEAMCLAUDE_PIN="${TEAMCLAUDE_PIN:-}"  # commit hash to pin; empty = HEAD at install time
+TEAMCLAUDE_DIR=/opt/teamclaude
+RELAY_DIR=/opt/teamclaude-relay
+RELAY_ENV_FILE=/etc/teamclaude-relay/env
 
 log()  { echo "[install-native] $*"; }
 warn() { echo "[install-native][WARN] $*" >&2; }
@@ -125,8 +137,75 @@ log "    gh login: $GH_LOGIN"
 GIT_USER="${OPENCLAW_GIT_USER:-$GH_LOGIN}"
 GIT_EMAIL="${OPENCLAW_GIT_EMAIL:-${GH_LOGIN}@users.noreply.github.com}"
 
-# ---------- 4) workspace + worker templates from our repo ----------
-log "4/8 deploy agents/main/* and agents/worker/* into workspace"
+# ---------- 4) teamclaude proxy + our relay ----------
+log "4/9 teamclaude proxy (multi-account rotation) + relay"
+
+# 4a) git clone teamclaude (vendored at /opt/teamclaude, pinned commit if set)
+if [ ! -d "$TEAMCLAUDE_DIR/.git" ]; then
+  git clone "$TEAMCLAUDE_REPO" "$TEAMCLAUDE_DIR"
+fi
+( cd "$TEAMCLAUDE_DIR" && git fetch >/dev/null 2>&1 || true )
+if [ -n "$TEAMCLAUDE_PIN" ]; then
+  ( cd "$TEAMCLAUDE_DIR" && git checkout "$TEAMCLAUDE_PIN" 2>&1 | tail -2 )
+else
+  ( cd "$TEAMCLAUDE_DIR" && git pull --ff-only 2>&1 | tail -2 ) || true
+fi
+log "    teamclaude commit: $(cd "$TEAMCLAUDE_DIR" && git rev-parse --short HEAD)"
+
+# 4b) our relay (vendored in repo)
+mkdir -p "$RELAY_DIR"
+install -m 0644 "$REPO_ROOT/vendor/teamclaude-relay.cjs" "$RELAY_DIR/teamclaude-relay.cjs"
+
+# 4c) generate PROXY_API_KEY if not yet (random secret, lives in /etc/teamclaude-relay/env)
+mkdir -p "$(dirname "$RELAY_ENV_FILE")"
+if [ ! -s "$RELAY_ENV_FILE" ] || ! grep -q '^PROXY_API_KEY=' "$RELAY_ENV_FILE"; then
+  PROXY_API_KEY="tc-$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+  echo "PROXY_API_KEY=$PROXY_API_KEY" > "$RELAY_ENV_FILE"
+  log "    generated new PROXY_API_KEY → $RELAY_ENV_FILE"
+fi
+chown root:"$OPENCLAW_USER" "$RELAY_ENV_FILE"
+chmod 0640 "$RELAY_ENV_FILE"
+PROXY_API_KEY=$(grep '^PROXY_API_KEY=' "$RELAY_ENV_FILE" | cut -d= -f2-)
+
+# 4d) systemd units
+install -m 0644 "$REPO_ROOT/scripts/templates/teamclaude.service"       /etc/systemd/system/teamclaude.service
+install -m 0644 "$REPO_ROOT/scripts/templates/teamclaude-relay.service" /etc/systemd/system/teamclaude-relay.service
+systemctl daemon-reload
+systemctl enable teamclaude.service teamclaude-relay.service >/dev/null 2>&1
+systemctl restart teamclaude.service
+sleep 2
+systemctl is-active teamclaude >/dev/null || warn "    teamclaude failed to start — see: journalctl -u teamclaude -n 30"
+
+# 4e) sync proxy.apiKey in teamclaude.json with our generated one
+TEAMCLAUDE_CONF="$OPENCLAW_HOME/.config/teamclaude.json"
+if [ -f "$TEAMCLAUDE_CONF" ]; then
+  as_openclaw_sh "python3 - '$TEAMCLAUDE_CONF' '$PROXY_API_KEY' <<'PY'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+with open(path) as f: d = json.load(f)
+prx = d.setdefault('proxy', {})
+prx['apiKey'] = key
+prx.setdefault('port', 3456)
+prx.setdefault('host', '127.0.0.1')
+with open(path,'w') as f: json.dump(d,f,indent=2); f.write('\n')
+print('teamclaude.json proxy.apiKey synced')
+PY"
+  systemctl restart teamclaude.service
+  sleep 2
+fi
+
+systemctl restart teamclaude-relay.service
+sleep 1
+systemctl is-active teamclaude-relay >/dev/null \
+  && log "    ✓ teamclaude + relay running (3456 / 3457)" \
+  || warn "    ✗ relay not active — journalctl -u teamclaude-relay -n 30"
+
+if ! ss -tlnp 2>/dev/null | grep -q ':3456 '; then
+  log "    NOTE: no accounts yet — to add: sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name <name>"
+fi
+
+# ---------- 5) workspace + worker templates from our repo ----------
+log "5/9 deploy agents/main/* and agents/worker/* into workspace"
 mkdir -p "$WORKSPACE_DIR/scripts" "$WORKER_WORKSPACE"
 chown "$OPENCLAW_USER:$OPENCLAW_USER" "$WORKSPACE_DIR" "$WORKER_WORKSPACE"
 
@@ -150,9 +229,14 @@ deploy "$REPO_ROOT/scripts/new-project.sh"           "$WORKSPACE_DIR/scripts/new
 deploy "$REPO_ROOT/scripts/templates/session-stop-dump.sh" \
        "$WORKSPACE_DIR/scripts/session-stop-dump.sh"  0755
 
-# ---------- 5) Claude credentials + Stop hook ----------
-log "5/8 ~/.claude/.credentials.json + settings.json"
+# ---------- 6) Stop hook + (optional) bootstrap .credentials.json ----------
+log "6/9 ~/.claude/settings.json (Stop hook)"
 mkdir -p "$CLAUDE_DIR"
+# .credentials.json — claude code хочет видеть валидный OAuth токен на старте,
+# но при runtime все запросы идут через teamclaude relay (он подменяет x-api-key).
+# Если есть claude_oauth_token в секретах — кладём; нет — пропускаем, claude
+# code иногда работает и без него если ANTHROPIC_BASE_URL установлен и
+# CLAUDE_CODE_OAUTH_TOKEN передаётся через env.
 if [ "$HAS_CLAUDE" -eq 1 ]; then
   TOKEN=$(cat "$SECRETS_DIR/claude_oauth_token")
   EXPIRES=$(date -d '+1 year' +%s)000
@@ -186,8 +270,8 @@ EOF
 chmod 600 "$CLAUDE_DIR/settings.json"
 chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$CLAUDE_DIR"
 
-# ---------- 6) Patch openclaw.json ----------
-log "6/8 patch openclaw.json: cliBackends.claude-cli + agents + default model"
+# ---------- 7) Patch openclaw.json ----------
+log "7/9 patch openclaw.json: cliBackends.claude-cli (via teamclaude relay) + agents + default model"
 cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%s)"
 as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$HAS_CLAUDE' <<'PY'
 import json, sys, os
@@ -215,6 +299,8 @@ if has_claude:
     env['GIT_AUTHOR_EMAIL']    = email
     env['GIT_COMMITTER_NAME']  = user
     env['GIT_COMMITTER_EMAIL'] = email
+    # Все запросы Claude идут через teamclaude relay (наш wrapper) на 3457
+    env['ANTHROPIC_BASE_URL']  = 'http://127.0.0.1:3457'
     # Default to Claude for primary
     model_cfg = defaults.setdefault('model', {})
     model_cfg['primary'] = 'claude-cli/claude-sonnet-4-6'
@@ -243,15 +329,15 @@ with open(path, 'w') as f:
 print('openclaw.json keys now:', sorted(d.keys()))
 PY"
 
-# ---------- 7) restart openclaw ----------
-log "7/8 systemctl restart openclaw"
+# ---------- 8) restart openclaw ----------
+log "8/9 systemctl restart openclaw"
 systemctl restart openclaw
 sleep 4
 systemctl is-active openclaw >/dev/null || die "openclaw failed to start after restart — journalctl -u openclaw -n 40"
 log "    openclaw active"
 
-# ---------- 8) smoke tests ----------
-log "8/8 smoke tests"
+# ---------- 9) smoke tests ----------
+log "9/9 smoke tests"
 fail=0
 as_openclaw_sh "claude --version" >/dev/null 2>&1 \
   && log "    ✓ claude CLI reachable for openclaw user" \
@@ -263,6 +349,12 @@ as_openclaw_sh "GH_CONFIG_DIR=$OPENCLAW_HOME/.config/gh gh api /user --jq .login
 ss -tlnp 2>/dev/null | grep -q ':18789' \
   && log "    ✓ gateway listening on 127.0.0.1:18789" \
   || { warn "    ✗ gateway not listening"; fail=1; }
+ss -tlnp 2>/dev/null | grep -q ':3456 ' \
+  && log "    ✓ teamclaude listening on 127.0.0.1:3456" \
+  || warn "    (info) teamclaude not on 3456 — no accounts yet?"
+ss -tlnp 2>/dev/null | grep -q ':3457 ' \
+  && log "    ✓ relay listening on 127.0.0.1:3457" \
+  || { warn "    ✗ relay not on 3457"; fail=1; }
 curl -sk -o /dev/null -w "    nginx https://localhost/: %{http_code}\n" https://localhost/
 
 if [ "$fail" -eq 0 ]; then
@@ -271,7 +363,13 @@ if [ "$fail" -eq 0 ]; then
   log "  Git author/email: $GIT_USER <$GIT_EMAIL>"
   log "  Claude wiring:    $([ "$HAS_CLAUDE" -eq 1 ] && echo enabled || echo SKIPPED — drop claude_oauth_token to enable)"
   log "  openclaw config:  $OPENCLAW_CONFIG"
-  log "  Restart again:    systemctl restart openclaw"
+  log ""
+  log "  Next step (manual): add Claude OAuth accounts to teamclaude rotation:"
+  log "    sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
+  log "    sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-2"
+  log "    # then: systemctl restart teamclaude"
+  log ""
+  log "  Restart cleanly:  systemctl restart teamclaude teamclaude-relay openclaw"
 else
   die "some smoke tests failed; check warnings"
 fi
