@@ -244,9 +244,9 @@ chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$CLAUDE_DIR"
 # ---------- 7) Patch openclaw.json ----------
 log "6/8 patch openclaw.json: cliBackends.claude-cli (via teamclaude relay) + agents + default model"
 cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%s)"
-as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$CLAUDE_BOOTSTRAP_TOKEN_PLACEHOLDER' <<'PY'
+as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$CLAUDE_BOOTSTRAP_TOKEN_PLACEHOLDER' '$OPENCLAW_HOME' <<'PY'
 import json, sys
-path, claude_bin, user, email, bootstrap_token = sys.argv[1:6]
+path, claude_bin, user, email, bootstrap_token, home = sys.argv[1:7]
 
 with open(path) as f:
     d = json.load(f)
@@ -280,14 +280,14 @@ if 'main' not in existing_ids:
     agent_list.append({
         'id': 'main',
         'identity': {'name':'Manager','emoji':'🎯'},
-        'workspace': os.environ['HOME'] + '/.openclaw/workspace',
+        'workspace': home + '/.openclaw/workspace',
         'subagents': {'allowAgents': ['worker']}
     })
 if 'worker' not in existing_ids:
     agent_list.append({
         'id': 'worker',
         'identity': {'name':'Worker','emoji':'🔧'},
-        'workspace': os.environ['HOME'] + '/.openclaw/workspaces/worker'
+        'workspace': home + '/.openclaw/workspaces/worker'
     })
 
 with open(path, 'w') as f:
