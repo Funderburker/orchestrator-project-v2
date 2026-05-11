@@ -121,6 +121,29 @@ CLAUDE_BIN=$(command -v claude)
 [ -x "$CLAUDE_BIN" ] || die "claude CLI install failed"
 log "    claude at: $CLAUDE_BIN ($(claude --version | head -1))"
 
+# ---------- 2b) clawhub (skills package manager) ----------
+log "    clawhub (skills package manager)"
+if ! command -v clawhub >/dev/null 2>&1; then
+  npm install -g clawhub 2>&1 | tail -3
+else
+  log "    already installed"
+fi
+
+# ---------- 2c) systemd drop-in: Restart=always для openclaw ----------
+# openclaw на SIGUSR1 (supervisor-restart по config change) делает clean exit
+# status=0, который дефолтный Restart=on-failure НЕ поднимает. always —
+# гарантирует подъём в обоих случаях. drop-in не трогает основной unit
+# (он за девопсом), кладём отдельно.
+log "    drop-in: Restart=always for openclaw"
+mkdir -p /etc/systemd/system/openclaw.service.d
+cat > /etc/systemd/system/openclaw.service.d/restart-always.conf <<EOF
+# Managed by orchestrator-project install. Reason: SIGUSR1 supervisor-restart
+# завершает процесс с status=0, при Restart=on-failure systemd не поднимает.
+[Service]
+Restart=always
+EOF
+systemctl daemon-reload
+
 # ---------- 4) teamclaude proxy + our relay ----------
 log "3/8 teamclaude proxy (multi-account rotation) + relay"
 
@@ -214,6 +237,24 @@ done
 deploy "$REPO_ROOT/scripts/new-project.sh"           "$WORKSPACE_DIR/scripts/new-project.sh"           0755
 deploy "$REPO_ROOT/scripts/templates/session-stop-dump.sh" \
        "$WORKSPACE_DIR/scripts/session-stop-dump.sh"  0755
+
+# 4b) clawhub skills (same set as local: frontend-design, shadcn, python, docker).
+# Устанавливаются под openclaw-юзера в $WORKSPACE_DIR/skills/, главмен и worker
+# видят их (worker — через symlink на тот же skills/).
+log "    skills (clawhub): anthropics-frontend-design, shadcn, python, docker"
+mkdir -p "$WORKSPACE_DIR/skills"
+chown "$OPENCLAW_USER:$OPENCLAW_USER" "$WORKSPACE_DIR/skills"
+for skill in anthropics-frontend-design shadcn python docker; do
+  if [ -d "$WORKSPACE_DIR/skills/$skill" ]; then
+    log "        $skill already installed"
+  else
+    ( cd "$WORKSPACE_DIR" && as_openclaw env HOME="$OPENCLAW_HOME" clawhub install "$skill" 2>&1 | tail -2 )
+  fi
+done
+
+# 4c) worker skills symlink (одни skills на оба agent'а)
+as_openclaw ln -sfn "$WORKSPACE_DIR/skills" "$WORKER_WORKSPACE/skills"
+log "    worker skills → symlink → main skills"
 
 # ---------- 6) Stop hook + (optional) bootstrap .credentials.json ----------
 log "5/8 ~/.claude/settings.json (Stop hook)"

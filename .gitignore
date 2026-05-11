@@ -6,6 +6,10 @@
 secrets/
 **/secrets/
 **/.credentials.json
+# SSH keys (даже публичные — мусор в корне репо)
+id_ed25519*
+id_rsa*
+*.pub.zip
 
 # IDE
 .idea/
