@@ -15,30 +15,30 @@
 #   - /home/openclaw/.openclaw/openclaw.json exists (onboard already done)
 #   - nginx site-config has proxy_pass to http://127.0.0.1:18789
 #   - Secrets dropped under /home/openclaw/.openclaw/secrets/ (owner=openclaw, 0600):
-#       * github_token       (classic PAT)
 #       * claude_oauth_token (sk-ant-oat01-...) — required if you want main on Claude
-#       * github_owner       (e.g. `Funderburker`)
 #       * trello_lists.env   (optional, includes TRELLO_KEY/TRELLO_TOKEN/BOARD_ID)
 #       * telegram.env       (optional)
 #
 # What it does (idempotent, safe to rerun):
-#   1. apt deps: gh, apache2-utils, jq (curl/python3/openssl/git already present)
+#   1. apt deps: jq (curl/python3/openssl/git already present)
 #   2. claude CLI globally: npm i -g @anthropic-ai/claude-code@<PIN>
-#   3. gh auth (under openclaw user, file-based)
-#   4. teamclaude proxy (multi-account rotation): git clone /opt/teamclaude,
+#   3. teamclaude proxy (multi-account rotation): git clone /opt/teamclaude,
 #      install our relay (/opt/teamclaude-relay/teamclaude-relay.cjs from repo
 #      vendor/), generate PROXY_API_KEY, install 2 systemd units under
 #      User=openclaw with the same hardening pattern devops used for openclaw.
-#   5. Deploy agents/main/*.md, agents/worker/*.md, our new-project.sh
-#   6. ~/.claude/settings.json (Stop hook)
-#   7. Patch /home/openclaw/.openclaw/openclaw.json:
+#   4. Deploy agents/main/*.md, agents/worker/*.md, our new-project.sh
+#   5. ~/.claude/settings.json (Stop hook)
+#   6. Patch /home/openclaw/.openclaw/openclaw.json:
 #      - cliBackends.claude-cli (full path + env: ANTHROPIC_BASE_URL,
 #        GIT_AUTHOR_*/GIT_COMMITTER_*)
 #      - agents.list (main + worker) if missing
 #      - default model -> Claude
-#   8. systemctl restart openclaw (so it re-reads config)
-#   9. Smoke tests (gh, claude, openclaw up, nginx 200, hook installed,
+#   7. systemctl restart openclaw (so it re-reads config)
+#   8. Smoke tests (claude, openclaw up, nginx 200, hook installed,
 #      teamclaude + relay listening)
+#
+# Local-only git: проекты живут только в /home/openclaw/projects/<chat_id>/<slug>/.git.
+# Никакого GitHub remote — push origin отключён намеренно.
 
 set -euo pipefail
 
@@ -81,7 +81,6 @@ OPENCLAW_VER=$(python3 -c "import json; print(json.load(open('$OPENCLAW_DIR/pack
 log "openclaw version on disk: $OPENCLAW_VER"
 [ -f "$OPENCLAW_CONFIG" ] || die "$OPENCLAW_CONFIG missing — onboard the service first"
 
-[ -s "$SECRETS_DIR/github_token" ]      || die "$SECRETS_DIR/github_token missing (drop the PAT)"
 [ -s "$SECRETS_DIR/claude_oauth_token" ] || warn "$SECRETS_DIR/claude_oauth_token missing — will skip Claude wiring; main will keep default model"
 HAS_CLAUDE=0
 [ -s "$SECRETS_DIR/claude_oauth_token" ] && HAS_CLAUDE=1
@@ -89,28 +88,21 @@ HAS_CLAUDE=0
 [ -d "$REPO_ROOT/agents/main" ]  || die "$REPO_ROOT/agents/main missing — run from cloned repo"
 [ -d "$REPO_ROOT/agents/worker" ] || die "$REPO_ROOT/agents/worker missing"
 
+# Local git identity for spawned claude (no GitHub remote, but commits still need author).
+# Override with OPENCLAW_GIT_USER / OPENCLAW_GIT_EMAIL env if you want different.
+GIT_USER="${OPENCLAW_GIT_USER:-openclaw}"
+GIT_EMAIL="${OPENCLAW_GIT_EMAIL:-openclaw@localhost}"
+
 # ---------- 1) apt deps ----------
-log "1/8 apt: gh, apache2-utils, jq"
-need=()
-command -v gh        >/dev/null 2>&1 || need+=(gh)
-command -v htpasswd  >/dev/null 2>&1 || need+=(apache2-utils)
-command -v jq        >/dev/null 2>&1 || need+=(jq)
-if [ "${#need[@]}" -gt 0 ]; then
-  if ! command -v gh >/dev/null 2>&1; then
-    install -m0755 -d /etc/apt/keyrings
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list
-  fi
+log "1/8 apt: jq (curl/python3/openssl/git already present)"
+if ! command -v jq >/dev/null 2>&1; then
   apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${need[@]}"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq jq
 else
   log "    already installed"
 fi
 
-# ---------- 2) claude CLI globally (host install, not in container) ----------
+# ---------- 2) claude CLI globally (host install) ----------
 log "2/8 claude CLI @anthropic-ai/claude-code@$CLAUDE_PIN"
 CURRENT_CLAUDE=$(npm ls -g --depth=0 2>/dev/null | grep -oE '@anthropic-ai/claude-code@\S+' || echo "")
 if [ "$CURRENT_CLAUDE" != "@anthropic-ai/claude-code@$CLAUDE_PIN" ]; then
@@ -122,23 +114,8 @@ CLAUDE_BIN=$(command -v claude)
 [ -x "$CLAUDE_BIN" ] || die "claude CLI install failed"
 log "    claude at: $CLAUDE_BIN ($(claude --version | head -1))"
 
-# ---------- 3) gh auth (file-based, under openclaw) ----------
-log "3/8 gh auth (per openclaw user, file-based hosts.yml)"
-# Put the token + login as openclaw, in its own ~/.config/gh/. file-based bypasses
-# any env-filtering inside spawned claude subprocesses (lesson from old server).
-mkdir -p "$OPENCLAW_HOME/.config/gh"
-chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$OPENCLAW_HOME/.config"
-as_openclaw_sh "GH_CONFIG_DIR=$OPENCLAW_HOME/.config/gh \
-  gh auth login --with-token < $SECRETS_DIR/github_token" || warn "    gh auth login returned non-zero"
-GH_LOGIN=$(as_openclaw_sh "GH_TOKEN=\$(cat $SECRETS_DIR/github_token) gh api /user --jq .login")
-[ -n "$GH_LOGIN" ] || die "gh smoke failed"
-log "    gh login: $GH_LOGIN"
-
-GIT_USER="${OPENCLAW_GIT_USER:-$GH_LOGIN}"
-GIT_EMAIL="${OPENCLAW_GIT_EMAIL:-${GH_LOGIN}@users.noreply.github.com}"
-
 # ---------- 4) teamclaude proxy + our relay ----------
-log "4/9 teamclaude proxy (multi-account rotation) + relay"
+log "3/8 teamclaude proxy (multi-account rotation) + relay"
 
 # 4a) git clone teamclaude (vendored at /opt/teamclaude, pinned commit if set)
 if [ ! -d "$TEAMCLAUDE_DIR/.git" ]; then
@@ -205,7 +182,7 @@ if ! ss -tlnp 2>/dev/null | grep -q ':3456 '; then
 fi
 
 # ---------- 5) workspace + worker templates from our repo ----------
-log "5/9 deploy agents/main/* and agents/worker/* into workspace"
+log "4/8 deploy agents/main/* and agents/worker/* into workspace"
 mkdir -p "$WORKSPACE_DIR/scripts" "$WORKER_WORKSPACE"
 chown "$OPENCLAW_USER:$OPENCLAW_USER" "$WORKSPACE_DIR" "$WORKER_WORKSPACE"
 
@@ -230,7 +207,7 @@ deploy "$REPO_ROOT/scripts/templates/session-stop-dump.sh" \
        "$WORKSPACE_DIR/scripts/session-stop-dump.sh"  0755
 
 # ---------- 6) Stop hook + (optional) bootstrap .credentials.json ----------
-log "6/9 ~/.claude/settings.json (Stop hook)"
+log "5/8 ~/.claude/settings.json (Stop hook)"
 mkdir -p "$CLAUDE_DIR"
 # .credentials.json — claude code хочет видеть валидный OAuth токен на старте,
 # но при runtime все запросы идут через teamclaude relay (он подменяет x-api-key).
@@ -271,7 +248,7 @@ chmod 600 "$CLAUDE_DIR/settings.json"
 chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$CLAUDE_DIR"
 
 # ---------- 7) Patch openclaw.json ----------
-log "7/9 patch openclaw.json: cliBackends.claude-cli (via teamclaude relay) + agents + default model"
+log "6/8 patch openclaw.json: cliBackends.claude-cli (via teamclaude relay) + agents + default model"
 cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%s)"
 as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$HAS_CLAUDE' <<'PY'
 import json, sys, os
@@ -330,22 +307,18 @@ print('openclaw.json keys now:', sorted(d.keys()))
 PY"
 
 # ---------- 8) restart openclaw ----------
-log "8/9 systemctl restart openclaw"
+log "7/8 systemctl restart openclaw"
 systemctl restart openclaw
 sleep 4
 systemctl is-active openclaw >/dev/null || die "openclaw failed to start after restart — journalctl -u openclaw -n 40"
 log "    openclaw active"
 
 # ---------- 9) smoke tests ----------
-log "9/9 smoke tests"
+log "8/8 smoke tests"
 fail=0
 as_openclaw_sh "claude --version" >/dev/null 2>&1 \
   && log "    ✓ claude CLI reachable for openclaw user" \
   || { warn "    ✗ claude CLI not in PATH for openclaw"; fail=1; }
-as_openclaw_sh "GH_CONFIG_DIR=$OPENCLAW_HOME/.config/gh gh api /user --jq .login" \
-  | grep -q "^$GH_LOGIN$" \
-  && log "    ✓ gh auth working under openclaw user" \
-  || { warn "    ✗ gh auth not working"; fail=1; }
 ss -tlnp 2>/dev/null | grep -q ':18789' \
   && log "    ✓ gateway listening on 127.0.0.1:18789" \
   || { warn "    ✗ gateway not listening"; fail=1; }
@@ -359,8 +332,7 @@ curl -sk -o /dev/null -w "    nginx https://localhost/: %{http_code}\n" https://
 
 if [ "$fail" -eq 0 ]; then
   log "DONE"
-  log "  GitHub login:     $GH_LOGIN"
-  log "  Git author/email: $GIT_USER <$GIT_EMAIL>"
+  log "  Git author/email: $GIT_USER <$GIT_EMAIL> (commits-only, no remote)"
   log "  Claude wiring:    $([ "$HAS_CLAUDE" -eq 1 ] && echo enabled || echo SKIPPED — drop claude_oauth_token to enable)"
   log "  openclaw config:  $OPENCLAW_CONFIG"
   log ""

@@ -11,16 +11,16 @@
 
 ```bash
 # 1. SSH key-only доступ root (Hetzner cloud-init обычно делает сам)
-# 2. Положи секреты:
+# 2. Положи секреты (опционально, если используешь):
 mkdir -p ~/.openclaw/secrets
-echo "ghp_xxx"  > ~/.openclaw/secrets/github_token   # classic PAT, repo+workflow scopes
-# опционально (если используешь):
 cat > ~/.openclaw/secrets/telegram.env <<EOF
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
 EOF
 chmod -R go-rwx ~/.openclaw/secrets
 ```
+
+> ℹ️ GitHub-токены **не нужны** — проекты живут в локальном git на сервере, без remote.
 
 ### Запуск:
 
@@ -58,15 +58,13 @@ bash /root/orchestrator-project/scripts/server-install.sh
 5. `nginx` конфиг для openclaw создан в `/etc/nginx/sites-enabled/openclaw-ssl.conf`
    с `location / { proxy_pass http://127.0.0.1:18789; ... }` (TLS не обязателен,
    но без него — небезопасно).
-6. Per-host секреты в `~/.openclaw/secrets/`:
-   - `github_token` — classic PAT с `repo`, `workflow` scopes (минимум).
-7. (опционально) `~/.openclaw/secrets/openclaw_ui_password` — если хочешь
-   фиксированный пароль; иначе скрипт сам сгенерит.
+6. (опционально) `~/.openclaw/secrets/openclaw_ui_password` — если хочешь
+   фиксированный пароль для basic auth; иначе скрипт сам сгенерит.
 
 ### Запуск
 
 ```bash
-git clone https://github.com/<owner>/orchestrator-project /root/orchestrator-project
+git clone <repo-url> /root/orchestrator-project
 bash /root/orchestrator-project/scripts/server-bootstrap.sh
 ```
 
@@ -74,16 +72,14 @@ bash /root/orchestrator-project/scripts/server-bootstrap.sh
 
 | # | Что |
 |---|---|
-| 1 | Ставит `gh` + `apache2-utils` (если не стоят) |
-| 2 | `gh auth login --with-token` под токен из секретов |
-| 3 | Кладёт стабильный gh-config в `/etc/openclaw/gh/` (mounted в контейнеры) |
-| 4 | nginx basic auth на `https://<host>/` (логин = твой gh login, пароль в `~/.openclaw/secrets/openclaw_ui_password`) |
-| 5 | `chmod 700` секреты директории, `600` файлы |
-| 6 | Ставит main Stop hook с anti-injection фильтром |
-| 7 | Патчит `openclaw.json` — добавляет `GIT_AUTHOR_*/GIT_COMMITTER_*` в env claude-cli |
-| 8 | Генерирует `/opt/openclaw/docker-compose.override.yml` (mount gh + cli=unless-stopped) |
-| 9 | `docker compose up -d` (recreates если что-то поменялось) |
-| 10 | Smoke: `gh api /user` в обоих контейнерах, nginx 401/200, hook syntax |
+| 1 | Ставит `apache2-utils` (если не стоит) |
+| 2 | nginx basic auth на `https://<host>/` (пароль в `~/.openclaw/secrets/openclaw_ui_password`) |
+| 3 | `chmod 700` секреты директории, `600` файлы |
+| 4 | Ставит main Stop hook с anti-injection фильтром |
+| 5 | Патчит `openclaw.json` — добавляет `GIT_AUTHOR_*/GIT_COMMITTER_*` в env claude-cli (для локальных коммитов) |
+| 6 | Генерирует `/opt/openclaw/docker-compose.override.yml` (cli=unless-stopped) |
+| 7 | `docker compose up -d` (recreates если что-то поменялось) |
+| 8 | Smoke: nginx 401/200, hook syntax |
 
 ### Перерасклад
 
@@ -97,10 +93,10 @@ bash /root/orchestrator-project/scripts/server-bootstrap.sh
 OPENCLAW_DIR=/opt/openclaw                    # где клон openclaw
 OPENCLAW_CONFIG_DIR=/root/.openclaw           # где openclaw.json
 OPENCLAW_EXTRAS_DIR=/etc/openclaw             # стабильные mount-источники
-OPENCLAW_NGINX_AUTH_USER=tanya                # default = gh login
+OPENCLAW_NGINX_AUTH_USER=admin                # имя для basic auth
 OPENCLAW_NGINX_SITE_CONF=/etc/nginx/...       # default openclaw-ssl.conf
-OPENCLAW_GIT_USER=...                          # default = gh login
-OPENCLAW_GIT_EMAIL=...                         # default = <login>@users.noreply.github.com
+OPENCLAW_GIT_USER=openclaw                    # author для git commit
+OPENCLAW_GIT_EMAIL=openclaw@localhost         # email для git commit
 ```
 
 ### Что не входит и делается отдельно
@@ -141,9 +137,7 @@ cp scripts/config.env.example scripts/config.env    # пути — обычно 
 ```bash
 mkdir -p ~/.openclaw/secrets
 
-# GitHub
-echo "ghp_xxx"          > ~/.openclaw/secrets/github_token
-echo "your-github-name" > ~/.openclaw/secrets/github_owner
+# (GitHub-токены НЕ нужны — проекты живут в локальном git без remote.)
 
 # Trello (получи ключ/токен на https://trello.com/power-ups/admin)
 echo "trello-key"   > ~/.openclaw/secrets/trello_key

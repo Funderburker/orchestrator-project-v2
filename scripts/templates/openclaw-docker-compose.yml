@@ -12,9 +12,7 @@ services:
       TZ: ${OPENCLAW_TZ:-UTC}
       TRELLO_API_KEY: ${TRELLO_API_KEY:-}
       TRELLO_TOKEN: ${TRELLO_TOKEN:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       SERVER_IP: ${SERVER_IP:-144.76.34.61}
-      GH_TOKEN: ${GH_TOKEN:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
@@ -77,9 +75,7 @@ services:
       TZ: ${OPENCLAW_TZ:-UTC}
       TRELLO_API_KEY: ${TRELLO_API_KEY:-}
       TRELLO_TOKEN: ${TRELLO_TOKEN:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       SERVER_IP: ${SERVER_IP:-144.76.34.61}
-      GH_TOKEN: ${GH_TOKEN:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw

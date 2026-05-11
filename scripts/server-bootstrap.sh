@@ -1,34 +1,35 @@
 #!/usr/bin/env bash
-# server-bootstrap.sh — one-shot, idempotent setup of an OpenClaw host.
+# server-bootstrap.sh — one-shot, idempotent setup of an OpenClaw host
+# (docker-flavor — see server-install-native.sh for systemd-flavor servers).
 #
 # Run on a fresh server (Ubuntu/Debian) AS ROOT, after:
 #   - cloning this repo to anywhere
 #   - cloning & building openclaw at /opt/openclaw (own flow, not ours)
 #   - placing per-host secrets in ~/.openclaw/secrets/:
-#       * github_token        (ghp_… classic PAT)
 #       * trello_*, telegram.env, claude_oauth_token_2 — if used
 #   - having docker, docker compose, nginx already installed
 #
+# Local-only git: проекты живут только в локальном .git, без GitHub remote.
+#
 # What it does (each step is idempotent — safe to rerun):
-#   1. Install gh CLI + apache2-utils on the host
-#   2. Log gh in via the host's github_token, normalize hosts.yml
-#   3. Stable copy of hosts.yml at /etc/openclaw/gh-hosts.yml (mounted into containers)
+#   1. Install apache2-utils on the host
+#   2-3. (gh skipped — local-only git)
 #   4. nginx basic auth on https://<host>/  (gateway reverse proxy)
 #   5. chmod 700 secrets dirs, 600 secret files
 #   6. Install/refresh main's Stop hook with anti-injection filter
 #   7. Patch openclaw.json: GIT_AUTHOR_*/GIT_COMMITTER_* in cliBackends.claude-cli.env
 #   8. Generate /opt/openclaw/docker-compose.override.yml from our template
 #   9. docker compose up -d (only if anything changed)
-#  10. Smoke tests: gh, nginx auth, container health
+#  10. Smoke tests: nginx auth, container health
 #
 # Tunables (env vars, all optional):
 #   OPENCLAW_DIR                 default /opt/openclaw
 #   OPENCLAW_CONFIG_DIR          default /root/.openclaw
 #   OPENCLAW_EXTRAS_DIR          default /etc/openclaw
-#   OPENCLAW_NGINX_AUTH_USER     default = gh login
+#   OPENCLAW_NGINX_AUTH_USER     default = admin
 #   OPENCLAW_NGINX_SITE_CONF     default /etc/nginx/sites-enabled/openclaw-ssl.conf
-#   OPENCLAW_GIT_USER            default = gh login
-#   OPENCLAW_GIT_EMAIL           default = <login>@users.noreply.github.com
+#   OPENCLAW_GIT_USER            default = openclaw
+#   OPENCLAW_GIT_EMAIL           default = openclaw@localhost
 
 set -euo pipefail
 
@@ -44,10 +45,7 @@ NGINX_SITE_CONF="${OPENCLAW_NGINX_SITE_CONF:-/etc/nginx/sites-enabled/openclaw-s
 NGINX_AUTH_DIR="/etc/nginx/auth"
 NGINX_AUTH_FILE="$NGINX_AUTH_DIR/openclaw_ui"
 SECRETS_DIR="$OPENCLAW_CONFIG_DIR/secrets"
-TOKEN_FILE="$SECRETS_DIR/github_token"
 PASSWORD_FILE="$SECRETS_DIR/openclaw_ui_password"
-HOSTS_YML_SRC="$HOME/.config/gh/hosts.yml"
-GH_CFG_DIR="$OPENCLAW_EXTRAS_DIR/gh"
 HOSTS_YML_DST="$GH_CFG_DIR/hosts.yml"
 OVERRIDE_DST="$OPENCLAW_DIR/docker-compose.override.yml"
 HOOK_DST="$OPENCLAW_CONFIG_DIR/workspace/scripts/session-stop-dump.sh"
@@ -73,64 +71,31 @@ done
 [ -d "$OPENCLAW_DIR" ] || die "$OPENCLAW_DIR not found — clone openclaw upstream first"
 [ -f "$OPENCLAW_DIR/docker-compose.yml" ] || die "$OPENCLAW_DIR/docker-compose.yml missing"
 [ -d "$OPENCLAW_CONFIG_DIR" ] || die "$OPENCLAW_CONFIG_DIR missing — run \`openclaw onboard\` first"
-[ -s "$TOKEN_FILE" ] || die "$TOKEN_FILE missing or empty"
 [ -d "$TEMPLATES" ] || die "$TEMPLATES missing — run from cloned repo"
 [ -f "$TEMPLATES/session-stop-dump.sh" ] || die "$TEMPLATES/session-stop-dump.sh missing"
 [ -f "$TEMPLATES/openclaw-compose.override.yml" ] || die "$TEMPLATES/openclaw-compose.override.yml missing"
 [ -f "$REPO_ROOT/agents/main-AGENTS.md" ] || die "$REPO_ROOT/agents/main-AGENTS.md missing"
 [ -f "$REPO_ROOT/scripts/new-project.sh" ] || die "$REPO_ROOT/scripts/new-project.sh missing"
 
+# Local git identity (no GitHub remote — only local commits).
+NGINX_AUTH_USER="${OPENCLAW_NGINX_AUTH_USER:-admin}"
+GIT_USER="${OPENCLAW_GIT_USER:-openclaw}"
+GIT_EMAIL="${OPENCLAW_GIT_EMAIL:-openclaw@localhost}"
+
 # ---------- 1) host packages ----------
-log "1/12 installing gh + apache2-utils on host"
-need_install=()
-command -v gh >/dev/null 2>&1 || need_install+=(gh)
-command -v htpasswd >/dev/null 2>&1 || need_install+=(apache2-utils)
-if [ "${#need_install[@]}" -gt 0 ]; then
-  if ! command -v gh >/dev/null 2>&1; then
-    install -m0755 -d /etc/apt/keyrings || true
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list
-  fi
+log "1/12 installing apache2-utils on host"
+if ! command -v htpasswd >/dev/null 2>&1; then
   apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${need_install[@]}"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apache2-utils
 else
   log "    already installed"
 fi
 
-# ---------- 2) gh auth on host ----------
-log "2/12 gh auth login (idempotent)"
-GH_TOKEN_VAL="$(cat "$TOKEN_FILE")"
-if ! GH_TOKEN="$GH_TOKEN_VAL" gh auth status -h github.com >/dev/null 2>&1; then
-  gh auth login --with-token < "$TOKEN_FILE"
-fi
-# Force format-upgrade of hosts.yml on host (so we can mount :ro into containers)
-GH_LOGIN="$(GH_TOKEN="$GH_TOKEN_VAL" gh api /user --jq .login)"
-[ -n "$GH_LOGIN" ] || die "gh api /user returned empty login — bad token?"
-log "    logged in as: $GH_LOGIN"
+# ---------- 2) (skipped — no gh auth needed) ----------
+log "2/12 gh auth — skipped (local-only git, no GitHub remote)"
 
-NGINX_AUTH_USER="${OPENCLAW_NGINX_AUTH_USER:-$GH_LOGIN}"
-GIT_USER="${OPENCLAW_GIT_USER:-$GH_LOGIN}"
-GIT_EMAIL="${OPENCLAW_GIT_EMAIL:-${GH_LOGIN}@users.noreply.github.com}"
-
-# ---------- 3) gh config dir for container mount ----------
-# We mount the whole dir (not single file) so gh can write its companion
-# config.yml next to hosts.yml on first call inside the container.
-log "3/12 gh config dir → $GH_CFG_DIR"
-mkdir -p "$GH_CFG_DIR"
-chown "$NODE_UID:$NODE_GID" "$GH_CFG_DIR"
-chmod 0700 "$GH_CFG_DIR"
-[ -f "$HOSTS_YML_SRC" ] || die "$HOSTS_YML_SRC missing — gh login flow broke"
-if ! cmp -s "$HOSTS_YML_SRC" "$HOSTS_YML_DST" 2>/dev/null; then
-  install -m 0600 "$HOSTS_YML_SRC" "$HOSTS_YML_DST"
-  CHANGED=1
-fi
-chown "$NODE_UID:$NODE_GID" "$HOSTS_YML_DST"
-chmod 0600 "$HOSTS_YML_DST"
-# Clean up legacy single-file path if it exists (older bootstrap version)
-[ -f "$OPENCLAW_EXTRAS_DIR/gh-hosts.yml" ] && rm -f "$OPENCLAW_EXTRAS_DIR/gh-hosts.yml"
+# ---------- 3) (skipped — no gh hosts.yml needed) ----------
+log "3/12 gh config dir — skipped (local-only git)"
 
 # ---------- 4) nginx basic auth ----------
 if [ -f "$NGINX_SITE_CONF" ]; then
@@ -299,15 +264,7 @@ fi
 log "12/12 smoke tests"
 fail=0
 
-# gh inside both containers
-for c in openclaw-openclaw-cli-1 openclaw-openclaw-gateway-1; do
-  if docker exec "$c" sh -c 'gh api /user --jq .login' 2>/dev/null | grep -q "^$GH_LOGIN$"; then
-    log "    ✓ $c → gh api /user = $GH_LOGIN"
-  else
-    warn "    ✗ $c → gh smoke FAILED"
-    fail=1
-  fi
-done
+# (gh smoke removed — no GitHub remote, local-only git)
 
 # nginx 401/200
 if [ -f "$NGINX_SITE_CONF" ]; then

@@ -5,7 +5,7 @@
 # Pre-conditions (ровно одно ручное действие):
 #   1. Ubuntu/Debian, root SSH-доступ.
 #   2. Per-host secrets in ~/.openclaw/secrets/:
-#      - github_token        — classic PAT (repo, workflow scopes)
+#      (никаких github_token — git только локальный, без GitHub remote)
 #      - telegram.env        — TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...  (optional)
 #      - trello_*            — если используешь
 #
@@ -41,7 +41,7 @@ die()  { echo "[install][FATAL] $*" >&2; exit 1; }
 # ---------- 0) preflight ----------
 [ "$(id -u)" -eq 0 ] || die "must run as root (sudo)"
 [ -d "$REPO_ROOT/scripts/templates" ] || die "$REPO_ROOT/scripts/templates missing — run from cloned repo"
-[ -s "$OPENCLAW_CONFIG_DIR/secrets/github_token" ] || die "$OPENCLAW_CONFIG_DIR/secrets/github_token missing"
+# (github_token не требуется — git локальный)
 
 # ---------- 1) apt deps ----------
 log "1/7 apt install deps"

@@ -82,7 +82,7 @@ bash ~/.openclaw/workspace/scripts/new-project.sh <slug> telegram:<chat_id> '<т
 
 Третий arg — **твой текущий sessionKey** (как opaque строка из MCP metadata). Скрипт запишет его в `<path>/.session_key`, чтобы worker знал куда возвращаться.
 
-Скрипт создаёт: `~/projects/<chat_id>/<slug>/`, `git init`, шаблоны `CLAUDE.md` / `HANDOFF.md` / `STATUS.md`, запись в `~/projects/<chat_id>/REGISTRY.md` и `memory-wiki/PROJECTS.md`, `.chat_id`, **`.session_key`**, GitHub repo + push. **`SPEC.md` НЕ создаёт — это твой шаг.**
+Скрипт создаёт: `~/projects/<chat_id>/<slug>/`, `git init`, шаблоны `CLAUDE.md` / `HANDOFF.md` / `STATUS.md`, запись в `~/projects/<chat_id>/REGISTRY.md` и `memory-wiki/PROJECTS.md`, `.chat_id`, **`.session_key`**. Никаких remote GitHub-репозиториев — всё локально в `.git/` на сервере. **`SPEC.md` НЕ создаёт — это твой шаг.**
 
 ### Шаг B. Записать SPEC через Write tool (ОБЯЗАТЕЛЬНО)
 
@@ -107,7 +107,7 @@ openclaw cron add \
   --session isolated \
   --delete-after-run \
   --announce \
-  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. Прочти SPEC.md и HANDOFF.md, реализуй по ним. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить после каждого логического шага, push на origin. После успеха — обнови HANDOFF.md. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> готов. <одна строка итога>. DEPLOY.md: <краткое что там>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если файла .session_key нет — fallback на --announce без target. НЕ пиши напрямую юзеру в TG, я сам это делаю."
+  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. Прочти SPEC.md и HANDOFF.md, реализуй по ним. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить локально после каждого логического шага (никакого push на remote — у проекта нет origin). После успеха — обнови HANDOFF.md. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> готов. <одна строка итога>. DEPLOY.md: <краткое что там>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если файла .session_key нет — fallback на --announce без target. НЕ пиши напрямую юзеру в TG, я сам это делаю."
 ```
 
 Worker запускается через 5 сек в isolated session. Управление возвращается сразу.
@@ -163,7 +163,7 @@ Write file_path=/home/<user>/projects/<chat_id>/<slug>/AMEND-<N>.md content="<т
 ```bash
 openclaw cron add --agent worker --at "5s" --session isolated --delete-after-run \
   --announce \
-  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. ДОРАБОТКА: прочти AMEND-<N>.md (свежее), там что нужно сделать. Контекст в SPEC.md и HANDOFF.md. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить, push, обнови HANDOFF. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> AMEND-<N> готов. <одна строка итога>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если .session_key нет — fallback --announce."
+  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. ДОРАБОТКА: прочти AMEND-<N>.md (свежее), там что нужно сделать. Контекст в SPEC.md и HANDOFF.md. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить локально, обнови HANDOFF. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> AMEND-<N> готов. <одна строка итога>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если .session_key нет — fallback --announce."
 ```
 
 (`--announce` — дополнительный fallback. Основной нотиф: worker → main через sessions_send → main проверяет → пишет юзеру.)
@@ -187,27 +187,12 @@ Worker шлёт результат через `sessions_send target=$(cat <path>
 
 ⚠️ **НЕЛЬЗЯ полагаться на text reply** — он остаётся в inter-session контексте, до юзера в TG **не дойдёт**. Только через явный `mcp__openclaw__message` с target.
 
-### ВСЕГДА перед ответом юзеру: Push-verify
-
-Прежде чем сказать юзеру «✅ готов» — обязательно проверь что свежие коммиты доехали до GitHub:
-
-```bash
-cd ~/projects/<chat_id>/<slug>
-git log origin/main..HEAD --oneline
-```
-
-- Пусто → всё запушено, можно отчитываться юзеру.
-- Есть коммиты → worker не доcпушил. Сделай `git push -u origin main` сам. Если падает с auth — настрой origin (`git remote set-url origin https://<token>@github.com/<owner>/<slug>.git` из секретов) и повтори. Только после успешного push — юзеру.
-
-**Если worker прислал маркер `⚠️ PUSH NOT SYNCED: ...`** в начале отчёта — это явный сигнал «доспушь сам» (он уже попробовал и retry'нул). Действуй так же.
-
 | Что прилетело | Что делать |
 |---|---|
-| `✅ <slug> готов. ...` | Прочитай `~/projects/<chat_id>/<slug>/DEPLOY.md` + `STATUS.md` + последнюю секцию `HANDOFF.md`. **Push-verify (выше)**. Убедись что реально работает (нет `.blocked`, коммиты есть, DEPLOY.md заполнен). Только потом — юзеру: ✅ <slug> готов. Стек / Адрес / Запуск. |
-| `⚠️ PUSH NOT SYNCED: ... ✅ <slug> готов. ...` | Сначала Push-verify + доcпушь сам. Только после `git log origin/main..HEAD` пуст → юзеру «✅ готов». |
+| `✅ <slug> готов. ...` | Прочитай `~/projects/<chat_id>/<slug>/DEPLOY.md` + `STATUS.md` + последнюю секцию `HANDOFF.md`. Убедись что реально работает (нет `.blocked`, коммиты есть, DEPLOY.md заполнен). Только потом — юзеру: ✅ <slug> готов. Стек / Адрес / Запуск. |
 | `🚨 <slug> упал. ...` | Прочитай хвост `~/projects/<chat_id>/<slug>/HANDOFF.md` + `STATUS.md`. Юзеру: 🚨 <slug> упал. Причина. Предложи действия. |
 | `.blocked` файл появился | Прочитай `~/projects/<chat_id>/<slug>/.blocked`. Юзеру: 🚦 <slug> ждёт ответа. Воркер спрашивает: <question дословно>. |
-| `[Internal task completion event]` (fallback) | Та же логика — прочитай файлы проекта (включая Push-verify), не верь статусу вслепую. |
+| `[Internal task completion event]` (fallback) | Та же логика — прочитай файлы проекта, не верь статусу вслепую. |
 
 ## 6. Юзер пишет «как там <slug>?»
 
@@ -222,11 +207,10 @@ Worker сам обновляет HANDOFF.md и пушит в git. Ты:
 ## Skills которые юзаешь (вместо bash курлов)
 
 - **trello** — двигать карточки, комментить (worker делает в основном; ты — только если просит юзер).
-- **github** — создание issues, PR (если юзер хочет).
 - **obsidian** / **notion** — long-term заметки (опционально).
 - **session-logs** — посмотреть свою историю.
 
-Не курлишь Trello/GitHub руками — у тебя есть skills.
+Не курлишь Trello руками — у тебя есть skill.
 
 ## Hard rules
 

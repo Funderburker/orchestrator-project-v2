@@ -17,7 +17,7 @@
 #   2. CLAUDE.md, HANDOFF.md, STATUS.md, SPEC.md placeholder
 #   3. .chat_id (full target), .session_key (как есть)
 #   4. Запись в ~/projects/<chat_id>/REGISTRY.md и ~/memory-wiki/PROJECTS.md (Active)
-#   5. GitHub repo + push (если есть github_token + github_owner)
+#   (GitHub remote убран — только локальный git)
 #   6. ~/projects/<chat_id>/.active = <slug>
 #   7. SUMMARY → main потом сам пишет SPEC.md (Write tool) и запускает worker'а
 #
@@ -141,31 +141,16 @@ chmod 600 "$PROJECT_PATH/.session_key"
 # 8. Initial commit
 git add . && git commit -qm "chore: init $SLUG"
 
-# 9. GitHub repo + push
-GITHUB_URL=""
-TOKEN=$(cat "$SECRETS/github_token" 2>/dev/null || true)
-OWNER=$(cat "$SECRETS/github_owner" 2>/dev/null || true)
-if [ -n "$TOKEN" ] && [ -n "$OWNER" ]; then
-  HTTP_CODE=$(curl -s -o /tmp/gh-create.json -w "%{http_code}" -H "Authorization: token $TOKEN" \
-    -d "{\"name\":\"$SLUG\",\"private\":true}" \
-    https://api.github.com/user/repos)
-  if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "422" ]; then
-    git remote add origin "https://${TOKEN}@github.com/${OWNER}/${SLUG}.git" 2>/dev/null || true
-    git push -u origin main >/dev/null 2>&1 && GITHUB_URL="https://github.com/$OWNER/$SLUG"
-  fi
-fi
-
-# 10. .active — per-user
+# 9. .active — per-user
 echo "$SLUG" > "$USER_DIR/.active"
 
-# 11. SUMMARY — main теперь сам пишет SPEC.md, потом запускает worker'а
+# 10. SUMMARY — main теперь сам пишет SPEC.md, потом запускает worker'а
 echo
 echo "=== SUMMARY ==="
 echo "project:    $SLUG"
 echo "path:       $PROJECT_PATH"
 echo "owner:      $CHAT_ID_NUM"
 echo "user dir:   $USER_DIR"
-[ -n "$GITHUB_URL" ] && echo "github:     $GITHUB_URL"
 echo
 echo "ДАЛЬШЕ (твои действия):"
 echo "  1. Write tool → $PROJECT_PATH/SPEC.md (полное ТЗ юзера, без bash-quoting)"
