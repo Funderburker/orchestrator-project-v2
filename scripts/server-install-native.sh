@@ -251,6 +251,15 @@ path, claude_bin, user, email, bootstrap_token, home = sys.argv[1:7]
 with open(path) as f:
     d = json.load(f)
 
+# Cross-tree sessions_send: worker → main inter-session reporting должно работать.
+# openclaw 5.6 по умолчанию ставит tools.sessions.visibility="tree", т.е. только
+# дочерние сессии текущей. Cron-spawned worker — отдельное session-дерево, и без
+# "all" sessions_send из worker'а в main блокируется policy (auto-delivery
+# через --announce → дубли в TG). См. types.tools.d.ts (SessionsToolsVisibility).
+tools_cfg = d.setdefault('tools', {})
+sessions_cfg = tools_cfg.setdefault('sessions', {})
+sessions_cfg['visibility'] = 'all'
+
 agents = d.setdefault('agents', {})
 defaults = agents.setdefault('defaults', {})
 backends = defaults.setdefault('cliBackends', {})
