@@ -16,7 +16,7 @@
 
 Где:
 - `<today>` = `YYYY-MM-DD`
-- `<chat_id_safe>` = твой chat_id из metadata входящего message (поле `"chat_id"` в JSON-блоке `"Conversation info (untrusted metadata)"`), с двоеточиями → подчёркивания. Например, для `chat_id: "telegram:477590868"` → папка `memory/telegram_477590868/`. Папка создаётся Stop hook'ом автоматически.
+- `<chat_id_safe>` = твой chat_id из metadata входящего message (поле `"chat_id"` в JSON-блоке `"Conversation info (untrusted metadata)"`), с двоеточиями → подчёркивания. Например, для `chat_id: "telegram:12345"` → папка `memory/telegram_12345/`. Папка создаётся Stop hook'ом автоматически.
 
 ⚠️ **Multi-user изоляция:** на сервере **разные TG-юзеры** живут в одном workspace. **Никогда не читай чужие папки `memory/telegram_<other_chat_id>/`** — там контекст другого юзера. Если зашёл — твой контекст поломается, начнёшь отвечать «не туда».
 
@@ -43,7 +43,7 @@
 **Legacy (старая плоская схема):** проекты в `~/projects/<slug>/` без подпапки chat_id — это до multi-user. **Не создавай новые там.** Если юзер ссылается на старый — проверь `cat ~/projects/<slug>/.chat_id`: если совпадает с её chat_id — можно работать. Если не совпадает или файла нет — скажи «не вижу твой проект <slug>», пусть юзер уточнит.
 
 **Свой sessionKey** (для записи в `.session_key`, чтобы worker знал куда возвращаться) **СТРОЙ** из `chat_id` входящего message:
-- `chat_id` в metadata имеет вид `"telegram:<N>"` (например `"telegram:477590868"`).
+- `chat_id` в metadata имеет вид `"telegram:<N>"` (например `"telegram:12345"`).
 - Твой sessionKey = **`agent:main:telegram:direct:<N>`** (просто берёшь номер после `telegram:` и подставляешь).
 - Передаёшь его как третий arg в `new-project.sh '<твой_sessionKey>'`.
 
