@@ -143,7 +143,9 @@ install -m 0644 "$REPO_ROOT/vendor/teamclaude-relay.cjs" "$RELAY_DIR/teamclaude-
 # 4c) generate PROXY_API_KEY if not yet (random secret, lives in /etc/teamclaude-relay/env)
 mkdir -p "$(dirname "$RELAY_ENV_FILE")"
 if [ ! -s "$RELAY_ENV_FILE" ] || ! grep -q '^PROXY_API_KEY=' "$RELAY_ENV_FILE"; then
-  PROXY_API_KEY="tc-$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+  # Random secret. openssl rand-hex avoids the `tr|head` SIGPIPE pitfall
+  # under `set -o pipefail`.
+  PROXY_API_KEY="tc-$(openssl rand -hex 16)"
   echo "PROXY_API_KEY=$PROXY_API_KEY" > "$RELAY_ENV_FILE"
   log "    generated new PROXY_API_KEY → $RELAY_ENV_FILE"
 fi
