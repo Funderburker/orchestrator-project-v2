@@ -14,7 +14,7 @@ EnvironmentFile=/etc/teamclaude-relay/env
 Environment=TC_HOST=127.0.0.1
 Environment=TC_PORT=3456
 Environment=PORT=3457
-ExecStart=/usr/bin/node /opt/teamclaude-relay/teamclaude-relay.cjs
+ExecStart=/usr/bin/env node /opt/teamclaude-relay/teamclaude-relay.cjs
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=30

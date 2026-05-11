@@ -11,7 +11,7 @@ WorkingDirectory=/opt/teamclaude
 Environment=HOME=/home/openclaw
 Environment=NODE_ENV=production
 # teamclaude reads/writes its config from ~/.config/teamclaude.json
-ExecStart=/usr/bin/node /opt/teamclaude/src/index.js server
+ExecStart=/usr/bin/env node /opt/teamclaude/src/index.js server
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=60

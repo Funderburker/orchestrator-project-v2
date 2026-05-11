@@ -187,7 +187,7 @@ systemctl is-active teamclaude-relay >/dev/null \
   || warn "    ✗ relay not active — journalctl -u teamclaude-relay -n 30"
 
 if ! ss -tlnp 2>/dev/null | grep -q ':3456 '; then
-  log "    NOTE: no accounts yet — to add: sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name <name>"
+  log "    NOTE: no accounts yet — to add: sudo -u $OPENCLAW_USER -- node $TEAMCLAUDE_DIR/src/index.js login --name <name>"
 fi
 
 # ---------- 5) workspace + worker templates from our repo ----------
@@ -333,7 +333,7 @@ if ss -tlnp 2>/dev/null | grep -q ':3456 '; then
   log "    ✓ teamclaude listening on 127.0.0.1:3456"
 else
   log "    (info) teamclaude not on 3456 yet — needs accounts:"
-  log "           runuser -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
+  log "           runuser -u $OPENCLAW_USER -- node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
 fi
 if ss -tlnp 2>/dev/null | grep -q ':3457 '; then
   log "    ✓ relay listening on 127.0.0.1:3457"
@@ -354,8 +354,8 @@ if [ "$fail" -eq 0 ]; then
   log "  openclaw config:  $OPENCLAW_CONFIG"
   log ""
   log "  Next step (manual): add Claude OAuth accounts to teamclaude rotation:"
-  log "    sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
-  log "    sudo -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-2"
+  log "    sudo -u $OPENCLAW_USER -- node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
+  log "    sudo -u $OPENCLAW_USER -- node $TEAMCLAUDE_DIR/src/index.js login --name acct-2"
   log "    # then: systemctl restart teamclaude"
   log ""
   log "  Restart cleanly:  systemctl restart teamclaude teamclaude-relay openclaw"
