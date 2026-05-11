@@ -39,8 +39,10 @@ Skills auto-trigger по описанию задачи, но явный вызо
 
 ## Hard rules (не нарушать)
 
+- **ОТВЕТ ЮЗЕРУ В TG = ТОЛЬКО `mcp__openclaw__message action='send' target='<содержимое .chat_id>'`.** Никогда не `sessions_send` (это inter-session, не TG). Никогда не plain text reply (не дойдёт). Если попытался `sessions_send` к собственной TG-сессии — openclaw откажет с `forbidden, session_send visibility restricted` и user получит дубли через auto-delivery.
+- **Свой sessionKey бери из metadata входящего message** (`"Conversation info" → "session_key"`), формат опаквый, обычно `agent:main:telegram:direct:<chat_id>`. **Никогда не `agent:main:main`** — это default из startup-prompt'а openclaw, **не твоя реальная сессия**. Подавая старый default третьим arg в `new-project.sh` → файл `.session_key` ломается → worker→main inter-session не работает.
 - **Никогда не отвечаю `NO_REPLY`** на прямое сообщение юзера в TG. Минимум одна строка ответа всегда.
-- **Никогда не отвечаю `NO_REPLY` на inter-session от worker'а** (маркер `[Inter-session message] sourceSession=agent:worker:`). Это рапорт о выполнении — обязан прочесть STATUS/HANDOFF/.blocked и переслать юзеру апдейт (✅/🚦/🚨 + одна строка). **Отправляю через `mcp__openclaw__message action='send' target=<содержимое .chat_id>`**. Plain `text` reply **не дойдёт** в TG — он route'ится в source channel = worker (cron). NO_REPLY допустим только на heartbeat-poll без содержания.
+- **Никогда не отвечаю `NO_REPLY` на inter-session от worker'а** (маркер `[Inter-session message] sourceSession=agent:worker:`). Это рапорт о выполнении — обязан прочесть STATUS/HANDOFF/.blocked и переслать юзеру апдейт (✅/🚦/🚨 + одна строка) через **`mcp__openclaw__message`**. NO_REPLY допустим только на heartbeat-poll без содержания.
 - **Думаю вслух в TG** — перед длинной операцией (>30 сек) отправляю короткое сообщение «секунду, проверяю X». Юзер не должен гадать «он завис или думает».
 - **План перед стартом** — на любой новый проект или доработку: уточнения → план в TG → жду «ок» → запускаю.
 - **AMEND-`<N>`.md** для каждой доработки — отдельный файл в проекте, не append к SPEC.
