@@ -15,9 +15,11 @@
 #   - /home/openclaw/.openclaw/openclaw.json exists (onboard already done)
 #   - nginx site-config has proxy_pass to http://127.0.0.1:18789
 #   - Secrets dropped under /home/openclaw/.openclaw/secrets/ (owner=openclaw, 0600):
-#       * claude_oauth_token (sk-ant-oat01-...) — required if you want main on Claude
 #       * trello_lists.env   (optional, includes TRELLO_KEY/TRELLO_TOKEN/BOARD_ID)
 #       * telegram.env       (optional)
+#       (НИКАКИЕ Claude/GitHub-токены не нужны: Claude — через teamclaude
+#        ротацию которая хранит токены в ~/.config/teamclaude.json и
+#        добавляется через `teamclaude login` после install.)
 #
 # What it does (idempotent, safe to rerun):
 #   1. apt deps: jq (curl/python3/openssl/git already present)
@@ -81,12 +83,17 @@ OPENCLAW_VER=$(python3 -c "import json; print(json.load(open('$OPENCLAW_DIR/pack
 log "openclaw version on disk: $OPENCLAW_VER"
 [ -f "$OPENCLAW_CONFIG" ] || die "$OPENCLAW_CONFIG missing — onboard the service first"
 
-[ -s "$SECRETS_DIR/claude_oauth_token" ] || warn "$SECRETS_DIR/claude_oauth_token missing — will skip Claude wiring; main will keep default model"
-HAS_CLAUDE=0
-[ -s "$SECRETS_DIR/claude_oauth_token" ] && HAS_CLAUDE=1
-
 [ -d "$REPO_ROOT/agents/main" ]  || die "$REPO_ROOT/agents/main missing — run from cloned repo"
 [ -d "$REPO_ROOT/agents/worker" ] || die "$REPO_ROOT/agents/worker missing"
+
+# Реальные OAuth-токены Claude живут в teamclaude (добавляются через
+# `teamclaude login --name acct-X`), не в нашем секрете. claude CLI шлёт
+# запросы на ANTHROPIC_BASE_URL=http://127.0.0.1:3457 → relay → teamclaude,
+# который и подменяет токен на один из своих аккаунтов. Поэтому отдельный
+# claude_oauth_token в наших секретах НЕ требуется.
+# CLAUDE_CODE_OAUTH_TOKEN в env — заглушка для bootstrap claude CLI (любая
+# строка, чтоб клиент не ругнулся «not logged in» на старте).
+CLAUDE_BOOTSTRAP_TOKEN_PLACEHOLDER="routed-through-teamclaude-relay"
 
 # Local git identity for spawned claude (no GitHub remote, but commits still need author).
 # Override with OPENCLAW_GIT_USER / OPENCLAW_GIT_EMAIL env if you want different.
@@ -209,24 +216,9 @@ deploy "$REPO_ROOT/scripts/templates/session-stop-dump.sh" \
 # ---------- 6) Stop hook + (optional) bootstrap .credentials.json ----------
 log "5/8 ~/.claude/settings.json (Stop hook)"
 mkdir -p "$CLAUDE_DIR"
-# .credentials.json — claude code хочет видеть валидный OAuth токен на старте,
-# но при runtime все запросы идут через teamclaude relay (он подменяет x-api-key).
-# Если есть claude_oauth_token в секретах — кладём; нет — пропускаем, claude
-# code иногда работает и без него если ANTHROPIC_BASE_URL установлен и
-# CLAUDE_CODE_OAUTH_TOKEN передаётся через env.
-if [ "$HAS_CLAUDE" -eq 1 ]; then
-  TOKEN=$(cat "$SECRETS_DIR/claude_oauth_token")
-  EXPIRES=$(date -d '+1 year' +%s)000
-  cat > "$CLAUDE_DIR/.credentials.json" <<EOF
-{
-  "claudeAiOauth": {
-    "accessToken": "$TOKEN",
-    "expiresAt": $EXPIRES
-  }
-}
-EOF
-  chmod 600 "$CLAUDE_DIR/.credentials.json"
-fi
+# .credentials.json больше не пишем — настоящие токены живут в teamclaude.json
+# и подменяются relay'ем на лету. claude CLI получает заглушку через
+# CLAUDE_CODE_OAUTH_TOKEN env (см. step 7, openclaw.json patch).
 
 cat > "$CLAUDE_DIR/settings.json" <<EOF
 {
@@ -250,10 +242,9 @@ chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$CLAUDE_DIR"
 # ---------- 7) Patch openclaw.json ----------
 log "6/8 patch openclaw.json: cliBackends.claude-cli (via teamclaude relay) + agents + default model"
 cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak.$(date +%s)"
-as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$HAS_CLAUDE' <<'PY'
-import json, sys, os
-path, claude_bin, user, email, has_claude = sys.argv[1:6]
-has_claude = has_claude == '1'
+as_openclaw_sh "python3 - '$OPENCLAW_CONFIG' '$CLAUDE_BIN' '$GIT_USER' '$GIT_EMAIL' '$CLAUDE_BOOTSTRAP_TOKEN_PLACEHOLDER' <<'PY'
+import json, sys
+path, claude_bin, user, email, bootstrap_token = sys.argv[1:6]
 
 with open(path) as f:
     d = json.load(f)
@@ -262,26 +253,23 @@ agents = d.setdefault('agents', {})
 defaults = agents.setdefault('defaults', {})
 backends = defaults.setdefault('cliBackends', {})
 
-if has_claude:
-    cli = backends.setdefault('claude-cli', {})
-    cli['command'] = claude_bin
-    env = cli.setdefault('env', {})
-    try:
-        with open(os.environ['HOME'] + '/.claude/.credentials.json') as f:
-            cred = json.load(f)
-            env['CLAUDE_CODE_OAUTH_TOKEN'] = cred['claudeAiOauth']['accessToken']
-    except Exception:
-        pass
-    env['GIT_AUTHOR_NAME']     = user
-    env['GIT_AUTHOR_EMAIL']    = email
-    env['GIT_COMMITTER_NAME']  = user
-    env['GIT_COMMITTER_EMAIL'] = email
-    # Все запросы Claude идут через teamclaude relay (наш wrapper) на 3457
-    env['ANTHROPIC_BASE_URL']  = 'http://127.0.0.1:3457'
-    # Default to Claude for primary
-    model_cfg = defaults.setdefault('model', {})
-    model_cfg['primary'] = 'claude-cli/claude-sonnet-4-6'
-    model_cfg.setdefault('fallbacks', ['claude-cli/claude-opus-4-7', 'claude-cli/claude-haiku-4-5'])
+cli = backends.setdefault('claude-cli', {})
+cli['command'] = claude_bin
+env = cli.setdefault('env', {})
+# Bootstrap-токен — клиент claude его получит, чтобы не ругаться 'not logged in'.
+# Все запросы идут через relay (ANTHROPIC_BASE_URL), который подменяет на
+# реальный OAuth из teamclaude.json.
+env['CLAUDE_CODE_OAUTH_TOKEN'] = bootstrap_token
+env['GIT_AUTHOR_NAME']     = user
+env['GIT_AUTHOR_EMAIL']    = email
+env['GIT_COMMITTER_NAME']  = user
+env['GIT_COMMITTER_EMAIL'] = email
+# Claude трафик идёт через teamclaude relay
+env['ANTHROPIC_BASE_URL']  = 'http://127.0.0.1:3457'
+# Default to Claude for primary
+model_cfg = defaults.setdefault('model', {})
+model_cfg['primary'] = 'claude-cli/claude-sonnet-4-6'
+model_cfg.setdefault('fallbacks', ['claude-cli/claude-opus-4-7', 'claude-cli/claude-haiku-4-5'])
 
 # Ensure main + worker exist in agents.list
 agent_list = agents.setdefault('list', [])
@@ -333,7 +321,7 @@ curl -sk -o /dev/null -w "    nginx https://localhost/: %{http_code}\n" https://
 if [ "$fail" -eq 0 ]; then
   log "DONE"
   log "  Git author/email: $GIT_USER <$GIT_EMAIL> (commits-only, no remote)"
-  log "  Claude wiring:    $([ "$HAS_CLAUDE" -eq 1 ] && echo enabled || echo SKIPPED — drop claude_oauth_token to enable)"
+  log "  Claude wiring:    via teamclaude relay (real tokens in teamclaude.json)"
   log "  openclaw config:  $OPENCLAW_CONFIG"
   log ""
   log "  Next step (manual): add Claude OAuth accounts to teamclaude rotation:"
