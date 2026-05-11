@@ -32,7 +32,7 @@
 
 Бот обслуживает **несколько TG-юзеров одновременно**. Каждый юзер живёт в **своей** подпапке `~/projects/<chat_id>/`. Чужие папки **не трогать никогда**, даже если slug совпадает.
 
-**Где взять `<chat_id>`:** из metadata входящего message (он же лежит в `<sessionKey>` после `agent:main:telegram:direct:<chat_id>`, но **не парси format** — формат может меняться между версиями openclaw; бери из metadata MCP). **Никогда не хардкодь.**
+**Где взять `<chat_id>`:** из metadata входящего message (поле `chat_id` в JSON-блоке `Conversation info`, формат `telegram:<N>`). **Никогда не хардкодь.**
 
 **Как работать:**
 - Все пути проекта: `~/projects/<chat_id>/<slug>/...`
@@ -42,12 +42,9 @@
 
 **Legacy (старая плоская схема):** проекты в `~/projects/<slug>/` без подпапки chat_id — это до multi-user. **Не создавай новые там.** Если юзер ссылается на старый — проверь `cat ~/projects/<slug>/.chat_id`: если совпадает с её chat_id — можно работать. Если не совпадает или файла нет — скажи «не вижу твой проект <slug>», пусть юзер уточнит.
 
-**Свой sessionKey** (для записи в `.session_key`, чтобы worker знал куда возвращаться) **СТРОЙ** из `chat_id` входящего message:
-- `chat_id` в metadata имеет вид `"telegram:<N>"` (например `"telegram:12345"`).
-- Твой sessionKey = **`agent:main:telegram:direct:<N>`** (просто берёшь номер после `telegram:` и подставляешь).
-- Передаёшь его как третий arg в `new-project.sh '<твой_sessionKey>'`.
+**Worker→main sessionKey = `agent:main:main`** (стабильный sessionKey главмена, одинаков локально и на сервере). `new-project.sh` сам подставляет это значение по умолчанию (третий arg необязателен) → запишет в `.session_key`.
 
-⚠️ **НЕ ПЕРЕДАВАЙ `agent:main:main`** — это openclaw default-startup строка, не реальная сессия. Если передашь — `.session_key` ломается, worker'у нельзя ответить main'у через `sessions_send` (forbidden=session-send-to-self), юзер получает дубликаты через auto-delivery.
+⚠️ **НЕ конструируй** `agent:main:telegram:direct:<N>` — у этого ключа `lastTo=None`, это пустая sessionId-запись, не твоя реальная сессия. Если `sessions_send` всё-таки падает — это не sessionKey виноват, а `tools.agentToAgent.enabled / tools.sessions.visibility` в openclaw.json (девопс/инсталлер должен ставить их).
 
 ---
 
@@ -82,10 +79,10 @@
 ### Шаг A. Создать структуру проекта (короткий bash, без SPEC)
 
 ```bash
-bash ~/.openclaw/workspace/scripts/new-project.sh <slug> telegram:<chat_id> '<твой_sessionKey>'
+bash ~/.openclaw/workspace/scripts/new-project.sh <slug> telegram:<chat_id>
 ```
 
-Третий arg — **твой текущий sessionKey** (как opaque строка из MCP metadata). Скрипт запишет его в `<path>/.session_key`, чтобы worker знал куда возвращаться.
+Скрипт сам запишет `agent:main:main` в `<path>/.session_key` (default). Это тот ключ, через который worker потом достучится до тебя через `sessions_send`.
 
 Скрипт создаёт: `~/projects/<chat_id>/<slug>/`, `git init`, шаблоны `CLAUDE.md` / `HANDOFF.md` / `STATUS.md`, запись в `~/projects/<chat_id>/REGISTRY.md` и `memory-wiki/PROJECTS.md`, `.chat_id`, **`.session_key`**. Никаких remote GitHub-репозиториев — всё локально в `.git/` на сервере. **`SPEC.md` НЕ создаёт — это твой шаг.**
 

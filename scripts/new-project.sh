@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # new-project.sh — подготовка структуры нового проекта (multi-user layout).
 #
-# Usage: bash new-project.sh <slug> <chat_id_or_telegram_target> <session_key>
+# Usage: bash new-project.sh <slug> <chat_id_or_telegram_target> [session_key]
 #   <slug>                       — короткое имя проекта (kebab-case)
 #   <chat_id_or_telegram_target> — либо чистый chat_id (123456), либо
 #                                  «telegram:123456» (формат target'а из metadata).
 #                                  Для папки берётся числовая часть; полный target
 #                                  записывается в .chat_id.
-#   <session_key>                — sessionKey main'а (opaque, формат не парсится).
-#                                  Записывается в .session_key для worker→main.
+#   [session_key]                — опционально. SessionKey главного main для
+#                                  worker→main `sessions_send`. По умолчанию
+#                                  `agent:main:main` (стабильный ключ главмена,
+#                                  одинаков локально и на сервере).
 #
 # Структура: ~/projects/<chat_id>/<slug>/  (per-user изоляция)
 #
@@ -27,9 +29,9 @@
 
 set -euo pipefail
 
-SLUG="${1:?usage: new-project.sh <slug> <chat_id|telegram:<id>> <session_key>}"
+SLUG="${1:?usage: new-project.sh <slug> <chat_id|telegram:<id>> [session_key]}"
 CHAT_ID_ARG="${2:?chat_id required (telegram:<id> or just <id>)}"
-SESSION_KEY="${3:?session_key required (opaque main sessionKey)}"
+SESSION_KEY="${3:-agent:main:main}"
 
 # Распарсить chat_id: «telegram:123456» -> «123456». Чистый ID -> как есть.
 case "$CHAT_ID_ARG" in

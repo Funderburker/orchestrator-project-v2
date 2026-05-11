@@ -251,14 +251,20 @@ path, claude_bin, user, email, bootstrap_token, home = sys.argv[1:7]
 with open(path) as f:
     d = json.load(f)
 
-# Cross-tree sessions_send: worker → main inter-session reporting должно работать.
-# openclaw 5.6 по умолчанию ставит tools.sessions.visibility="tree", т.е. только
-# дочерние сессии текущей. Cron-spawned worker — отдельное session-дерево, и без
-# "all" sessions_send из worker'а в main блокируется policy (auto-delivery
-# через --announce → дубли в TG). См. types.tools.d.ts (SessionsToolsVisibility).
+# Cross-tree + cross-agent sessions_send: worker → main inter-session reporting.
+# Нужны ОБА:
+#   tools.sessions.visibility = "all" — иначе cron-spawned worker (другое
+#     session-дерево) не может найти main как target → fallback на --announce
+#     → AutoTasker дубли в TG. Default в openclaw 5.6 = "tree".
+#   tools.agentToAgent.enabled = true  + allow=[main, worker] — иначе любой
+#     cross-agent send рубится с "Agent-to-agent messaging is disabled" сразу
+#     до проверки visibility. Default = false.
+# Локально это и есть рабочая конфигурация (project_architecture_local.md §3).
 tools_cfg = d.setdefault('tools', {})
-sessions_cfg = tools_cfg.setdefault('sessions', {})
-sessions_cfg['visibility'] = 'all'
+tools_cfg.setdefault('sessions', {})['visibility'] = 'all'
+a2a = tools_cfg.setdefault('agentToAgent', {})
+a2a['enabled'] = True
+a2a['allow'] = ['main', 'worker']
 
 agents = d.setdefault('agents', {})
 defaults = agents.setdefault('defaults', {})
