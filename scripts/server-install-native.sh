@@ -290,6 +290,23 @@ if 'worker' not in existing_ids:
         'workspace': home + '/.openclaw/workspaces/worker'
     })
 
+# Telegram channel: если в secrets/telegram.env лежит TELEGRAM_BOT_TOKEN —
+# подкладываем в channels.telegram.botToken. Без файла — пропускаем (UI-only).
+import os.path, re
+tg_env = home + '/.openclaw/secrets/telegram.env'
+if os.path.isfile(tg_env):
+    bot_token = None
+    with open(tg_env) as f:
+        for line in f:
+            m = re.match(r'^\s*TELEGRAM_BOT_TOKEN\s*=\s*(\S+)', line)
+            if m: bot_token = m.group(1)
+    if bot_token:
+        channels = d.setdefault('channels', {})
+        tg = channels.setdefault('telegram', {})
+        tg['enabled'] = True
+        tg['botToken'] = bot_token
+        print('channels.telegram wired (botToken length:', len(bot_token), ')')
+
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
