@@ -312,13 +312,23 @@ as_openclaw_sh "claude --version" >/dev/null 2>&1 \
 ss -tlnp 2>/dev/null | grep -q ':18789' \
   && log "    ✓ gateway listening on 127.0.0.1:18789" \
   || { warn "    ✗ gateway not listening"; fail=1; }
-ss -tlnp 2>/dev/null | grep -q ':3456 ' \
-  && log "    ✓ teamclaude listening on 127.0.0.1:3456" \
-  || warn "    (info) teamclaude not on 3456 — no accounts yet?"
-ss -tlnp 2>/dev/null | grep -q ':3457 ' \
-  && log "    ✓ relay listening on 127.0.0.1:3457" \
-  || { warn "    ✗ relay not on 3457"; fail=1; }
-curl -sk -o /dev/null -w "    nginx https://localhost/: %{http_code}\n" https://localhost/
+if ss -tlnp 2>/dev/null | grep -q ':3456 '; then
+  log "    ✓ teamclaude listening on 127.0.0.1:3456"
+else
+  log "    (info) teamclaude not on 3456 yet — needs accounts:"
+  log "           runuser -u $OPENCLAW_USER -- /usr/bin/node $TEAMCLAUDE_DIR/src/index.js login --name acct-1"
+fi
+if ss -tlnp 2>/dev/null | grep -q ':3457 '; then
+  log "    ✓ relay listening on 127.0.0.1:3457"
+else
+  log "    (info) relay not on 3457 yet — will start when teamclaude does"
+fi
+# nginx может быть 200 (доступен) или 403 (IP-allowlist у devops) — оба ОК, главное что отвечает
+NGINX_CODE=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost/ 2>/dev/null || echo "000")
+case "$NGINX_CODE" in
+  200|301|302|401|403) log "    ✓ nginx responding (HTTP $NGINX_CODE)" ;;
+  *) warn "    ✗ nginx not responding (HTTP $NGINX_CODE)"; fail=1 ;;
+esac
 
 if [ "$fail" -eq 0 ]; then
   log "DONE"
