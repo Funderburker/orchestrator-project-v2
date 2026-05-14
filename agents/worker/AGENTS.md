@@ -29,6 +29,13 @@
 
 SPEC.md и AMEND-*.md — правда, message — короткая отсылка.
 
+**Persistent session aware:** main может работать с тобой через persistent subagent (несколько BLOCK'ов в одной session) или через cron-isolated (один прогон). Понимай по message:
+- «Сделай BLOCK 1: ...» и **первое** твоё message в session → full Step 0 (SPEC + BLOCKS + HANDOFF + git log).
+- «BLOCK N: ... Не перечитывай SPEC» → ты в **persistent** mode, контекст в памяти. Прочти только инкремент: `cat <path>/BLOCKS.md` (увидишь ✅ предыдущих + ⏳ текущий) + `git diff HEAD~1` (что закоммитил в прошлом блоке).
+- «реализуй по SPEC.md» (без BLOCK) → cron mode, делай всё end-to-end за один прогон.
+
+В persistent mode после ✅ BLOCK — **жди следующего sessions_send от main**, НЕ exit и НЕ делай sessions_send просто так. Main управляет очерёдностью блоков.
+
 ## Step 1 — Стек (по умолчанию из STACK.md)
 
 | Layer | Default |
@@ -126,17 +133,32 @@ question: |
 
 Manager увидит `.blocked`, эскалирует юзеру. Юзер ответит → Manager сделает `subagents steer` или `resume-project.sh` → ты получишь продолжение.
 
-## Skills которые юзаешь (вместо своих курлов)
+## Skills которые юзаешь
 
-- **trello** — двигать карточку проекта по колонкам (Working / Done / Failed). Используй вместо `curl` к Trello API.
-- **obsidian** / **notion** — заметки (только если в SPEC сказано).
-- **coding-agent** — НЕ юзаешь (ты сам coding agent).
+Установлены через clawhub в `~/.openclaw/workspace/skills/` (видны мне через симлинк `workspaces/worker/skills`). **Обязательны к чтению ДО первой строки кода** соответствующей задачи:
 
-Skills уже в твоём `--append-system-prompt`. Просто пиши на естественном языке «двинь карточку проекта в Done» — openclaw подхватит skill.
+- **anthropics-frontend-design** + **shadcn-ui** — любая frontend-задача (React/Vue/etc). Без них = «простенький» MVP вместо production-quality UX (typography scale, spacing system, motion patterns, component variants). Если frontend есть в SPEC — оба skill'a читаются до JSX, и только потом код.
+- **python** — любая python-задача (FastAPI, скрипты, ML). Idioms, type hints, async patterns, project layout.
+- **docker** — Dockerfile, compose, volumes, healthchecks, multi-stage builds, security (non-root user, layer caching).
+
+⚠️ **Skill в `--append-system-prompt` ≠ skill применён.** Описания скилов инжектятся в bootstrap (чтоб я знал что они есть), но **сам гайд нужно явно прочесть** через `cat ~/.openclaw/workspaces/worker/skills/<name>/SKILL.md` ДО написания кода. Иначе результат — generic shadcn-defaults / generic FastAPI scaffold без depth.
+
+Skip skill на задаче где он применим = scope reduction → см. hard rule «Не сужай scope».
 
 ## Hard rules
 
 - **Step 0 обязателен.** Без чтения SPEC не начинай.
+- **Прочитай BLOCKS.md** в корне проекта.
+  - Если файл — placeholder (пусто либо «(пусто — главмен решит)») → работа над SPEC целиком, как обычно.
+  - Если файл — checklist с конкретными блоками → найди **текущий ⏳ block** (task-message укажет какой). Работай **только** над ним. Не лезь в следующие.
+- **По завершении блока:** пометь его `✅` в BLOCKS.md, коммит, sessions_send «✅ BLOCK N: <name>». Дальше main решит запускать следующий или нет.
+- **Перед отчётом '✅ готов' — `git status` должен быть clean.** Untracked / modified в working tree = НЕ done → `.blocked` с remark «pending commits», main не получает ✅. Commit правильно: app-code и infra (Dockerfile / compose / .env.example) отдельными logical commits, не одним «init+all».
+- **HANDOFF.md обязан содержать запись текущей сессии** до отчёта: что сделано (✅ по пунктам SPEC), edge-cases которые встретил, что осталось open. STATUS.md тоже обновлён на актуальный stage. Без journal-записи — `sessions_send '✅ готов'` НЕ отправляешь.
+- **External-SDK widget кейсы** (Sumsub WebSDK / Stripe Elements / Clerk SignIn / Trengo widget): если в SPEC упоминается — обязательно end-to-end в UI. Backend callback handler + status поле в БД БЕЗ frontend mount/trigger-кнопки = НЕ done → `.blocked`. Backend-only "приём webhook'ов" не закрывает acceptance criteria юзера «может пройти X».
+- **Реализуй КАЖДЫЙ explicit пункт из SPEC.** Не пропускай, не stub'ай, не пиши TODO/FIXME-заглушки. Сделал backend под фичу — сделал и UI end-to-end (button → API call → response → UI обновился). Backend без UI = незавершённая фича.
+- **Не отклоняйся от SPEC самовольно.** Если SPEC говорит «mcp SDK» — используй mcp SDK. Если technically не получается → `.blocked` с remark, не подменяй на свою версию «потому что лучше/стабильнее».
+- **Тесты из §Тесты SPEC обязательны.** Если SPEC требует N тестов — пишешь N. Без них в HANDOFF честно отметь «tests pending» + `.blocked`-маркер, но НЕ exit как «done» если §Тесты не выполнен.
+- **Не сужай scope.** «audit_log на ВСЕ sensitive actions» = на все, а не на удобные 2. Если перечень нечёткий — спроси через `.blocked`, не решай за main'a.
 - **Stateful = volume.** Postgres / Redis / Mongo — всегда named volume. Без volume = критический баг.
 - **Лимит попыток 2.** Try → fix → если симптом тот же → `.blocked`. Никаких третьих compose builds.
 - **Никаких спекулятивных правок** в работающее («сделать чище», «заменить на лучшее»).

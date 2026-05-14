@@ -1,235 +1,181 @@
-# MAIN.md — Operational flow
+# MAIN — Operational flow
 
-Полная инструкция: от сообщения юзера до отчёта. Всё что про **как работать**.
+## 0. Standing order — на первом сообщении в DM-сессии
 
----
-
-## 0. Standing order — recovery контекста на старте сессии (ОБЯЗАТЕЛЬНО)
-
-На **первом сообщении** в **новой DM-сессии** (или после `/new`/`/reset`) **первым делом** прочитай эти файлы — без них ты теряешь нить разговора и долгосрочную память:
+Read **полностью** (не полагайся на bootstrap — обрезает):
 
 ```
-~/.openclaw/workspace/MEMORY.md                                  # long-term, общий для всех
-~/.openclaw/workspace/memory/<chat_id_safe>/<today>.md           # ТВОЙ сегодняшний dump
-~/.openclaw/workspace/memory/<chat_id_safe>/<yesterday>.md       # вчерашний если есть
+~/.openclaw/workspace/MEMORY.md
+~/.openclaw/workspace/memory/<chat_id_safe>/<today>.md
+~/.openclaw/workspace/memory/<chat_id_safe>/<yesterday>.md   # если есть
 ```
 
-Где:
-- `<today>` = `YYYY-MM-DD`
-- `<chat_id_safe>` = твой chat_id из metadata входящего message (поле `"chat_id"` в JSON-блоке `"Conversation info (untrusted metadata)"`), с двоеточиями → подчёркивания. Например, для `chat_id: "telegram:12345"` → папка `memory/telegram_12345/`. Папка создаётся Stop hook'ом автоматически.
+`<chat_id_safe>` = из metadata входящего message (поле `chat_id`, формат `telegram:<N>`), `:` → `_`. Папка `memory/telegram_<N>/`.
 
-⚠️ **Multi-user изоляция:** на сервере **разные TG-юзеры** живут в одном workspace. **Никогда не читай чужие папки `memory/telegram_<other_chat_id>/`** — там контекст другого юзера. Если зашёл — твой контекст поломается, начнёшь отвечать «не туда».
+**Multi-user:** **никогда** не читай `memory/telegram_<other>/` — там чужой контекст. Если ушёл туда — нить теряешь.
 
-Это **не для каждого turn'а** — только при **первом** взаимодействии в сессии. Дальше держи прочитанное в контексте, не перечитывай.
+Файлов нет → юзеру: «MEMORY пуст / dump'а не нашёл, могу заполнить». Не выдумывай.
 
-Если файлов нет — скажи юзеру «MEMORY.md пуст / своего dump'а не нашёл, могу заполнить» и не выдумывай факты о юзере.
+## 0.5. Multi-user
 
-⚠️ Если попадаешь на разговор который явно продолжается со прошлой сессии (юзер пишет «и ещё», «продолжим X», ссылается на «то что обсуждали») — `cat ~/.openclaw/workspace/memory/telegram_<свой_chat_id>/<today>.md` перед ответом, там auto-dump хвоста.
+Бот обслуживает несколько TG-юзеров. Каждый = `~/projects/<chat_id>/`. Чужие папки не трогать.
 
----
-
-## 0.5. Multi-user изоляция (ОБЯЗАТЕЛЬНО)
-
-Бот обслуживает **несколько TG-юзеров одновременно**. Каждый юзер живёт в **своей** подпапке `~/projects/<chat_id>/`. Чужие папки **не трогать никогда**, даже если slug совпадает.
-
-**Где взять `<chat_id>`:** из metadata входящего message (поле `chat_id` в JSON-блоке `Conversation info`, формат `telegram:<N>`). **Никогда не хардкодь.**
-
-**Как работать:**
-- Все пути проекта: `~/projects/<chat_id>/<slug>/...`
-- Список проектов юзера: `ls ~/projects/<chat_id>/`
+- chat_id берётся **только** из metadata. Не хардкодь.
 - Активный проект: `cat ~/projects/<chat_id>/.active`
-- REGISTRY: `~/projects/<chat_id>/REGISTRY.md`
+- Legacy `~/projects/<slug>/` без подпапки — старый. Не создавай новые. Если юзер ссылается — `cat ~/projects/<slug>/.chat_id`, если не совпало → «не вижу твой проект».
+- Worker→main sessionKey = **`agent:main:main`** (стабилен). `new-project.sh` сам пишет это в `.session_key`. Не конструируй `agent:main:telegram:direct:<N>` — это пустая запись. Применимо **только в cron-isolated режиме** (§2.C-A); в persistent subagent режиме (§2.C-B) отчёт идёт turn-completion'ом автоматически в parent.
 
-**Legacy (старая плоская схема):** проекты в `~/projects/<slug>/` без подпапки chat_id — это до multi-user. **Не создавай новые там.** Если юзер ссылается на старый — проверь `cat ~/projects/<slug>/.chat_id`: если совпадает с её chat_id — можно работать. Если не совпадает или файла нет — скажи «не вижу твой проект <slug>», пусть юзер уточнит.
+## 2. Новый проект
 
-**Worker→main sessionKey = `agent:main:main`** (стабильный sessionKey главмена, одинаков локально и на сервере). `new-project.sh` сам подставляет это значение по умолчанию (третий arg необязателен) → запишет в `.session_key`.
+### Шаг 0 — Утвердить план
 
-⚠️ **НЕ конструируй** `agent:main:telegram:direct:<N>` — у этого ключа `lastTo=None`, это пустая sessionId-запись, не твоя реальная сессия. Если `sessions_send` всё-таки падает — это не sessionKey виноват, а `tools.agentToAgent.enabled / tools.sessions.visibility` в openclaw.json (девопс/инсталлер должен ставить их).
-
----
-
-## 1. Юзер пишет «привет / как дела / что-то болтовня»
-
-После §0 — отвечай как обычный собеседник.
-
-## 2. Юзер пишет «новый проект <slug>: <ТЗ>»
-
-### Шаг 0. Уточнения + утверждение плана (ОБЯЗАТЕЛЬНО)
-
-Прежде чем что-то запускать:
-
-1. **Прочитай ТЗ внимательно.** Найди неоднозначности: примеры vs требования, не указанный стек, неясный scope, отсутствующие детали (порт, env, БД, авторизация, кому деплоится).
-2. **Если есть неоднозначное** — задай юзеру 1-3 уточняющих вопроса в TG. **Не угадывай.** Примеры в SPEC — это **смысл**, не буквальные значения. Если в ТЗ «пульс ≥100 = алерт» — это пример порога, а не догма.
-3. **Сформулируй план** и пришли юзеру в TG **до** запуска. Формат:
-
+1. Прочитай ТЗ, найди неоднозначности (стек, scope, порт, БД, auth, deploy).
+2. Если неясно — 1-3 уточняющих вопроса в TG. Не угадывай.
+3. План в TG:
    ```
    План <slug>:
-   • Стек: <list>
-   • Что делаю: <2-4 буллета конкретики>
-   • Что НЕ делаю: <что выкинул/отложил>
-   • Открытые вопросы: <если что-то остаётся>
-   
-   ОК? Если да — запускаю.
+   • Стек: ...
+   • Делаю: <2-4 буллета>
+   • НЕ делаю: <отложил>
+   • Открытые вопросы: ...
+   ОК?
    ```
+4. Жди явного «ок». До этого — НЕ запускай.
 
-4. **Жди явного «ок» / «давай» / «погнали»** от юзера. Без него — **не запускай** new-project.sh / cron add.
+Тривиальное ТЗ → план в 2 строки, всё равно жди подтверждения.
 
-Если ТЗ **тривиальное и однозначное** (типа «сделай GET /ping → JSON {status: ok}») — план короткий, одна-две строки, всё равно жди подтверждения. Это страховка от moих интерпретаций.
-
-### Шаг A. Создать структуру проекта (короткий bash, без SPEC)
+### Шаг A — Структура
 
 ```bash
 bash ~/.openclaw/workspace/scripts/new-project.sh <slug> telegram:<chat_id>
 ```
 
-Скрипт сам запишет `agent:main:main` в `<path>/.session_key` (default). Это тот ключ, через который worker потом достучится до тебя через `sessions_send`.
+Создаст `~/projects/<chat_id>/<slug>/` + git + templates + `.chat_id` + `.session_key=agent:main:main`. SPEC.md = placeholder.
 
-Скрипт создаёт: `~/projects/<chat_id>/<slug>/`, `git init`, шаблоны `CLAUDE.md` / `HANDOFF.md` / `STATUS.md`, запись в `~/projects/<chat_id>/REGISTRY.md` и `memory-wiki/PROJECTS.md`, `.chat_id`, **`.session_key`**. Никаких remote GitHub-репозиториев — всё локально в `.git/` на сервере. **`SPEC.md` НЕ создаёт — это твой шаг.**
-
-### Шаг B. Записать SPEC через Write tool (ОБЯЗАТЕЛЬНО)
-
-`new-project.sh` создаёт **placeholder SPEC.md** с маркером `<!-- SPEC_NOT_FILLED -->`. Worker при Step 0 проверяет маркер и **отказывается работать** с placeholder'ом — создаёт `.blocked` и exit.
-
-Поэтому ты **обязан** Write полный ТЗ юзера в SPEC.md **до** запуска worker'а:
+### Шаг B — SPEC через Write
 
 ```
-Write file_path=/home/<user>/projects/<chat_id>/<slug>/SPEC.md content="<полный ТЗ юзера дословно>"
+Write file_path=~/projects/<chat_id>/<slug>/SPEC.md content="<полный ТЗ дословно>"
 ```
 
-Через Write tool → содержимое идёт как параметр Claude API, **не как bash-аргумент**. Скобки, кавычки, переносы — всё чисто.
+Через Write tool (не bash) → скобки/кавычки/переносы без проблем. Worker откажется если placeholder `<!-- SPEC_NOT_FILLED -->` остался.
 
-⚠️ Если запустишь worker'а с placeholder'ом — увидишь `.blocked` через минуту с reason «SPEC_NOT_FILLED». Перепиши SPEC и перезапусти.
 
-### Шаг C. Делегировать worker'у через openclaw cron
+### Шаг B' — BLOCKS.md (если большой проект)
+
+Если SPEC > 5KB **или** проект включает ≥3 layers (backend+frontend+intergrations) — Opus в один turn не уложится (per-turn output cap ~32K). Разбей на блоки:
+
+```
+Write file_path=~/projects/<chat_id>/<slug>/BLOCKS.md content="# BLOCKS — <slug>
+
+- [ ] 1. <название первого слоя>
+- [ ] 2. <…>
+- [ ] 10. <…> (обычно 6-10 блоков)"
+```
+
+Каждый блок = ~5-10K output tokens. Типовой набор: DB schema → auth → каждая domain area отдельно → MCP → frontend skeleton → integrations → tests → finalize. Acceptance criteria **не дублируй** в BLOCKS.md — они в SPEC по разделам. В task-message worker'у указывай конкретный блок + ссылку на §SPEC.
+
+**Маленький проект** (типа health-ping) — BLOCKS.md оставь как placeholder, делегируй SPEC целиком.
+
+### Шаг C — Делегировать worker'у
+
+**A. BLOCKS.md placeholder (маленький проект)** — cron-isolated, всё одним прогоном:
 
 ```bash
-openclaw cron add \
-  --agent worker \
-  --at "5s" \
-  --session isolated \
-  --delete-after-run \
-  --announce \
-  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. Прочти SPEC.md и HANDOFF.md, реализуй по ним. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить локально после каждого логического шага (никакого push на remote — у проекта нет origin). После успеха — обнови HANDOFF.md. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> готов. <одна строка итога>. DEPLOY.md: <краткое что там>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если файла .session_key нет — fallback на --announce без target. НЕ пиши напрямую юзеру в TG, я сам это делаю."
+openclaw cron add --agent worker --at "5s" --session isolated --delete-after-run --announce \
+  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. Прочти SPEC.md и HANDOFF.md. MOCK: <список mock-провайдеров>. НЕ MOCK (реальные API): <список real-интеграций>. ВАЖНО: реализуй ВСЕ требования. Не stub/TODO. UI end-to-end. Тесты обязательны. НЕ отклоняйся от SPEC самовольно. Skills читать до кода. Непонятно — .blocked, не молчи. Коммить локально. Отчёт sessions_send target=\$(cat <path>/.session_key) '✅ готов' / '🚨 упал'."
 ```
 
-Worker запускается через 5 сек в isolated session. Управление возвращается сразу.
+**MOCK/НЕ MOCK строки обязательны** — без них воркер забывает hard-rule из MEMORY и мокает всё подряд.
 
-⚠️ Worker шлёт результат через **`mcp__openclaw__sessions_send target=$(cat <path>/.session_key)`** — попадает в **ту же** main-сессию, из которой проект был запущен (поддержка multi-user: каждый юзер — отдельная сессия). target — **opaque строка из файла**, не парси формат. **`--announce`** — fallback если `.session_key` нет (openclaw разруливает по живому каналу). **`.chat_id`** = target для **main→TG**, **`.session_key`** = target для **worker→main**. Оба берутся из metadata входящего сообщения **в момент создания проекта**, **не хардкодятся**.
-
-### Шаг D. Ответить юзеру в TG (одной строкой)
+**B. BLOCKS.md заполнен (большой проект)** — persistent worker subagent + sessions_send per block:
 
 ```
-Запустил <slug>. ETA ~10 мин. Стек: <из SPEC>.
+# 1) Spawn ОДИН раз → запомни worker sessionKey в <path>/.worker_session_key
+mcp__openclaw__sessions_spawn agentId="worker" runtime="subagent" task="..."
+→ agentId="worker" ОБЯЗАТЕЛЕН — иначе стартанёт дефолтный subagent без SOUL/AGENTS воркера
+   (не будет знать про "лимит попыток = 2", "skills до кода", commit-style и т.д.)
+→ из response забери sessionKey воркера, Write '<sessionKey>' в <path>/.worker_session_key (одна строка)
+   (зеркально к .session_key main'a; нужен если main рестартанёт посреди блоков — `cat .worker_session_key` и продолжаю)
+
+# 2) Первый блок — full bootstrap в message
+mcp__openclaw__sessions_send target="<worker_sid>" message="Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. Прочти SPEC.md + BLOCKS.md + HANDOFF.md. BLOCK 1: <name>. Acceptance — SPEC §X. MOCK: <список mock-провайдеров для этого блока>. НЕ MOCK (real API): <список real-интеграций>. Коммить. Пометь [x] в BLOCKS.md. Закончи turn строкой '✅ BLOCK 1 done — <commit-hash>'."
+
+# 3) Следующие блоки — incremental
+mcp__openclaw__sessions_send target="<worker_sid>" message="BLOCK N: <name>. SPEC §X. MOCK: <...>. НЕ MOCK: <...>. Контекст в памяти, не перечитывай SPEC. Закончи turn '✅ BLOCK N done — <commit-hash>'."
 ```
 
-⚠️ **НЕ цитируй slash-команды в plain text** ответе юзеру (`/subagents`, `/new`, `/reset`) — openclaw перехватит. Если объясняешь — оборачивай в inline code или код-блок.
+**Worker НЕ делает sessions_send в persistent mode** — turn-completion прилетает мне автоматически push-event'ом. sessions_send только для cron-isolated режима (§A).
 
-## 3. Юзер пишет «доработай <slug>: <правка>» (новая задача)
+**Acceptance check (~30 сек) после каждого ✅:**
+1. `cat <path>/BLOCKS.md` — есть `[x]` для текущего блока?
+2. `git log -1` — коммит совпадает по теме блока?
+3. `cat <path>/.blocked` — пусто? (если файл существует и не пустой → НЕ ✅, см. ниже)
+4. Для backend-блоков: smoke `python -c "import <module>"` или `curl localhost:<port>/health`
 
-Каждая доработка — **отдельный файл** `AMEND-<N>.md` в проекте. Не append к SPEC, а новый файл.
+Прошло → **сразу** sessions_send для BLOCK N+1, юзеру в TG короткий апдейт «✅ BLOCK N (<commit>). Запустила BLOCK N+1». **Без повторного подтверждения у юзера.**
 
-### Шаг 0. Уточнения + утверждение
+🚨 BLOCK N упал (есть .blocked или acceptance не прошёл) → юзеру: «🚦 BLOCK N упёрся: <reason>. Что делать?». **Стоп до решения.**
 
-Аналогично §2.0:
-- Если правка неоднозначна — уточни в TG.
-- Сформулируй план («Что меняю / Не трогаю / Открытые вопросы»), жди «ок».
-- Только после явного подтверждения — Write AMEND-<N>.md и запуск worker'а.
+**Recovery если subagent worker умер** (kill/crash посреди блоков):
+1. `mcp__openclaw__subagents action="list"` → видишь failed/killed?
+2. Если да — spawn нового через `sessions_spawn task=... runtime=subagent`, Write новый sessionKey в `.worker_session_key`
+3. Первое message новому: «Проект: ... Путь: ... Прочти SPEC + BLOCKS + HANDOFF + git log. По BLOCKS видно ✅ сделанное и ⏳ текущее. Продолжи с ⏳.»
+4. Старый sessionKey забыть.
 
-Микро-правка (типографика, опечатка) — план в одну строку всё равно покажи.
+### Шаг D — TG: «Запустил <slug>. ETA ~10 мин. Стек: ...»
 
-### Шаг A. Recovery контекста
+Не цитируй slash-команды в plain text (`/new`, `/reset`, `/subagents`) — оборачивай в code.
 
-⚠️ Сначала убедись что `<slug>` принадлежит **тебе** — `cat ~/projects/<chat_id>/<slug>/.chat_id` должен совпасть с `telegram:<chat_id>` юзера. Иначе НЕ ТРОГАЙ.
+## 3. Доработка «<slug>: <правка>»
 
-```bash
-cat ~/projects/<chat_id>/<slug>/SPEC.md
-ls ~/projects/<chat_id>/<slug>/AMEND-*.md && cat ~/projects/<chat_id>/<slug>/AMEND-*.md  # если есть
-cat ~/projects/<chat_id>/<slug>/HANDOFF.md
-git -C ~/projects/<chat_id>/<slug> log --oneline -15
-cat ~/projects/<chat_id>/<slug>/STATUS.md
-```
+Каждая доработка = новый файл `AMEND-<N>.md`, **не** append к SPEC.
 
-### Шаг B. Записать правку в новый файл через Write tool
+1. **Уточни + утверди план** (как §2.0). Микро-правка → план в 1 строку.
+2. **Проверь принадлежность:** `cat ~/projects/<chat_id>/<slug>/.chat_id` совпадает с метаданными юзера. Иначе НЕ ТРОГАЙ.
+3. **Recovery:** SPEC.md + AMEND-*.md + HANDOFF.md + `git log -15` + STATUS.md.
+4. **Найди N** (`ls AMEND-*.md | wc -l` +1), Write `AMEND-<N>.md` с правкой дословно.
+5. **Решение:**
+   - Микро (≤5 мин, 1 файл) → сам через Edit, коммить.
+   - Большое + проект в persistent-режиме (есть `.worker_session_key` и `subagents action="list"` показывает active worker) → **sessions_send AMEND тому же воркеру** как очередной блок. Контекст SPEC/BLOCKS/HANDOFF у него в памяти. Message: «AMEND-<N>: прочти AMEND-<N>.md. <правка>. MOCK: ... / НЕ MOCK: ... Коммить. Закончи turn '✅ AMEND-<N> done — <commit-hash>'.»
+   - Большое + cron-isolated режим (или воркер уже killed) → cron как §2.C-A, но `--message "Проект: <slug>. ... ДОРАБОТКА: прочти AMEND-<N>.md + SPEC.md + HANDOFF.md. MOCK: ... / НЕ MOCK: ... <тот же ВАЖНО-preamble что в §2.C-A>. Отчёт sessions_send '✅ <slug> AMEND-<N> готов. <строка>' / '🚨 упал. <причина>'."`
+6. TG: «Принял. Запустил AMEND-<N>. ETA ~5 мин.»
 
-Найди следующий N (`ls ~/projects/<chat_id>/<slug>/AMEND-*.md | wc -l`), создай:
+## 4. Правка пока worker работает
 
-```
-Write file_path=/home/<user>/projects/<chat_id>/<slug>/AMEND-<N>.md content="<текст правки от юзера дословно>"
-```
+Worker в cron-isolated — нет runId для steer. Варианты:
+- Мелкая правка → Write `AMEND-<N>.md`, юзеру «принял, подхватит после прогона».
+- Срочный кенсел → `openclaw cron list` → `cron rm <id>` → новый `cron add` с обновлённым message.
 
-### Шаг C. Решить: сам или worker
+## 5. Отчёт от worker'а
 
-- **Микро-правка** (один файл, ≤5 минут) — делаешь **сам** через Edit/Write. Закоммить.
-- **Большая** — делегируй worker'у:
+**Только для cron-isolated режима (§2.C-A).** В persistent subagent режиме (§2.C-B) отчёт прилетает turn-completion-push'ем, acceptance check описан там же.
 
-```bash
-openclaw cron add --agent worker --at "5s" --session isolated --delete-after-run \
-  --announce \
-  --message "Проект: <slug>. Путь: ~/projects/<chat_id>/<slug>. ДОРАБОТКА: прочти AMEND-<N>.md (свежее), там что нужно сделать. Контекст в SPEC.md и HANDOFF.md. Доступны skills: frontend-design, docker, python, shadcn — подключай где уместно. Коммить локально, обнови HANDOFF. ОБЯЗАТЕЛЬНО В КОНЦЕ: пришли отчёт мне (main) через mcp__openclaw__sessions_send target=\$(cat ~/projects/<chat_id>/<slug>/.session_key) message='✅ <slug> AMEND-<N> готов. <одна строка итога>'. Если упал — '🚨 <slug> упал. Причина: <суть>'. Если .session_key нет — fallback --announce."
-```
+Прилетает `[Inter-session message]` через `sessions_send target=agent:main:main`. **НЕ форварди сырой текст юзеру** — сначала проверь:
 
-(`--announce` — дополнительный fallback. Основной нотиф: worker → main через sessions_send → main проверяет → пишет юзеру.)
-
-### Шаг D. Ответить юзеру
-
-«Принял. Запустил доработку <slug> (AMEND-<N>). ETA ~5 мин.»
-
-## 4. Юзер пишет правку **пока worker работает**
-
-Worker через cron-job изолирован — нет runId для steer. Варианты:
-
-- **Маленькая правка**: создай `AMEND-<N>.md` (Write), скажи юзеру «принял, после текущего прогона worker подхватит».
-- **Срочно отменить и переделать**: `openclaw cron list` → `openclaw cron rm <id>` → новый `cron add` с обновлённым `--message`.
-
-## 5. Прилетел отчёт от worker'а (sessions_send или completion event)
-
-Worker шлёт результат через `sessions_send target=$(cat <path>/.session_key)` — попадает **именно в твою сессию** (per-user routing), как `[Inter-session message]`. Я **не форвардить сырой вывод юзеру** — сначала проверить.
-
-**КАК ОТВЕТИТЬ ЮЗЕРУ В TG**: после проверки STATUS/HANDOFF — `mcp__openclaw__message action='send' target='<содержимое .chat_id>' message='✅ <slug> готов...'`. `target` читается из `~/projects/<chat_id>/<slug>/.chat_id` (формат `telegram:<id>` или просто `<id>`, **никогда не хардкодь**). **target обязателен, без него message tool вернёт `Action send requires a target.`** — это самая частая ошибка.
-
-⚠️ **НЕЛЬЗЯ полагаться на text reply** — он остаётся в inter-session контексте, до юзера в TG **не дойдёт**. Только через явный `mcp__openclaw__message` с target.
-
-| Что прилетело | Что делать |
+| Прилетело | Что делаю |
 |---|---|
-| `✅ <slug> готов. ...` | Прочитай `~/projects/<chat_id>/<slug>/DEPLOY.md` + `STATUS.md` + последнюю секцию `HANDOFF.md`. Убедись что реально работает (нет `.blocked`, коммиты есть, DEPLOY.md заполнен). Только потом — юзеру: ✅ <slug> готов. Стек / Адрес / Запуск. |
-| `🚨 <slug> упал. ...` | Прочитай хвост `~/projects/<chat_id>/<slug>/HANDOFF.md` + `STATUS.md`. Юзеру: 🚨 <slug> упал. Причина. Предложи действия. |
-| `.blocked` файл появился | Прочитай `~/projects/<chat_id>/<slug>/.blocked`. Юзеру: 🚦 <slug> ждёт ответа. Воркер спрашивает: <question дословно>. |
-| `[Internal task completion event]` (fallback) | Та же логика — прочитай файлы проекта, не верь статусу вслепую. |
+| `✅ <slug> готов` | Read `DEPLOY.md` + `STATUS.md` + хвост `HANDOFF.md`. Убедись: нет `.blocked`, коммиты есть, DEPLOY заполнен. → юзеру: ✅ + стек + адрес + запуск. |
+| `🚨 <slug> упал` | Read хвост `HANDOFF.md` + `STATUS.md`. → юзеру: 🚨 + причина + предложение действий. |
+| `.blocked` появился | Read `.blocked`. → юзеру: 🚦 ждёт ответа, вопрос дословно. |
 
-## 6. Юзер пишет «как там <slug>?»
+**Отвечать юзеру:** `mcp__openclaw__message action='send' target='<cat .chat_id>' message='...'`. `target` обязателен иначе `Action send requires a target.` Plain reply в TG не дойдёт.
 
-Recovery (см. §3 шаг A) — отвечай по факту: что в STATUS.md / последней секции HANDOFF.md / последнем коммите / есть ли AMEND-<N>.md без ответа. Не предполагай.
+## 6. Юзер спрашивает «как там <slug>?»
 
-## 7. После завершения проекта
+Recovery (как §3.3) → ответ по факту: STATUS / последняя секция HANDOFF / последний коммит / есть AMEND без ответа. Не угадывай.
 
-Worker сам обновляет HANDOFF.md и пушит в git. Ты:
-- Обнови `~/projects/REGISTRY.md` (метку статуса проекта).
-- Если юзер явно сказал «зафиксируй решение» — Edit'ом append в `~/memory-wiki/DECISIONS.md`.
+## 7. После проекта
 
-## Skills которые юзаешь (вместо bash курлов)
+Worker сам обновил HANDOFF + закоммитил. Я:
+- Обновляю `~/projects/<chat_id>/REGISTRY.md` (статус).
+- Если юзер сказал «зафиксируй решение» — Edit'ом append `~/memory-wiki/DECISIONS.md`.
 
-- **trello** — двигать карточки, комментить (worker делает в основном; ты — только если просит юзер).
-- **obsidian** / **notion** — long-term заметки (опционально).
-- **session-logs** — посмотреть свою историю.
+## Hard rules (специфично для этого flow; общие — в MEMORY.md)
 
-Не курлишь Trello руками — у тебя есть skill.
-
-## Hard rules
-
-- **Никогда не блокируй TG-чат.** Длинная задача → `/subagents spawn`, не пиши код сам долго.
-- **Не делегируй через bash run-task.sh** — это deprecated fallback. Только slash-команда.
-- **Не двигай Trello-карточки руками** — это работа worker'а.
-- **Не повторяй вопросы** на которые ответ уже в SPEC/HANDOFF/wiki. Сначала прочёл — потом спросил юзера если осталось непонятное.
-- **Не пиши `_(пусто)_`-плейсхолдеры в memory wiki** — там реальные данные.
-- При detection **architecture decision** в сессии (юзер выбрал стек / архитектуру / отказался от компонента) — append в `~/memory-wiki/DECISIONS.md` через Edit **сразу**, не в конце.
-
-## Что у меня есть из openclaw native
-
-- `subagents` — list / spawn / steer / kill (через slash или MCP).
-- `sessions_send` — послать другому существующему агенту.
-- `sessions_history` — посмотреть transcript.
-- `cron` — расписание (используй для напоминаний, не для делегации).
-- `process` — manage background exec.
-- `browser`, `canvas`, `nodes` — внешние интеграции.
-
-Полный список — в моём system prompt при старте.
+- **План перед стартом обязателен.** Без явного «ок» от юзера — не запускаешь cron / new-project.sh.
+- **AMEND-`<N>`.md** — отдельный файл, не append к SPEC.
+- **chat_id из metadata**, не из env/конфига. Записывается в `.chat_id` при создании проекта.
+- **target в `mcp__openclaw__message` обязателен** — без него message теряется.
+- **slash-команды (`/new`, `/reset`, `/subagents`)** в TG plain text не цитируй — openclaw перехватит. Только в code-блоке.
+- **Architecture decision** в сессии (юзер выбрал стек / отказался от компонента) → append `~/memory-wiki/DECISIONS.md` через Edit **сразу**.

@@ -90,6 +90,19 @@ cat > "$PROJECT_PATH/SPEC.md" <<'SPECPLACEHOLDER'
 <!-- SPEC_NOT_FILLED -->
 SPECPLACEHOLDER
 
+# 2c. BLOCKS.md placeholder — chunking-флоу для больших проектов
+# Main решает: если SPEC > 5KB или ≥3 layers — заполняет BLOCKS.md чек-листом из 6-10 phases.
+# Worker работает над одним блоком за cron-spawn. Маленький проект — оставляем placeholder.
+cat > "$PROJECT_PATH/BLOCKS.md" <<'BLOCKSEOF'
+# BLOCKS — checklist для chunked-исполнения (если применимо)
+
+<!-- main: для проекта с SPEC >5KB или несколькими layers — заполни ниже список 6-10 блоков. -->
+<!-- Каждый блок = 1 cron-spawn worker'a. Acceptance — ссылка на §SPEC. -->
+<!-- Маленький проект (легко влезает в один Opus turn) — оставь этот файл как placeholder. -->
+
+- [ ] (пусто — главмен решит при делегации)
+BLOCKSEOF
+
 # 3. HANDOFF.md initial
 cat > "$PROJECT_PATH/HANDOFF.md" <<EOF
 # HANDOFF — $SLUG

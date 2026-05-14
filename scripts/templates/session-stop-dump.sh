@@ -85,10 +85,10 @@ if [ ! -f "$TAIL_FILE" ]; then
 EOF
 fi
 
-python3 - "$TRANSCRIPT" "$TAIL_FILE" <<'PY'
+python3 - "$TRANSCRIPT" "$TAIL_FILE" "$TODAY" <<'PY'
 import sys, json, re, hashlib
 
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, today = sys.argv[1], sys.argv[2], sys.argv[3]
 
 # Anti-injection filter: если в тексте находим попытку перепрограммировать
 # модель — оборачиваем в codeblock с пометкой, чтобы при следующей загрузке
@@ -160,6 +160,11 @@ with open(src) as f:
             continue
         text = quote_if_suspicious(text)
         ts = (d.get('timestamp') or '')[:19]
+        # Filter: пишем только сегодняшние turns. Без этого в новый day-файл
+        # копируются вчерашние сообщения при первой recovery (main читает старый
+        # transcript, мы видим их как "повтор" дубликат).
+        if ts and not ts.startswith(today):
+            continue
         new.append((ts, role, text, uuid))
 
 if not new:
